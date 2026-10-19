@@ -144,3 +144,11 @@ dialog .row { flex-wrap: wrap; }
 .checks input { width: 20px; height: 20px; accent-color: var(--blue); }
 dialog h3 { margin: 14px 0 8px; }
 .timer.over { font-size: 20px; color: var(--orange); }
+
+/* ===== v11: 💪 몸 탭 버튼 폼 ===== */
+.body-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line); }
+.body-row:first-child { border-top: 0; }
+.body-k { flex: none; width: 52px; font-weight: 600; font-size: 15px; }
+.chip-btn.num { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; }
+.body-in { width: 110px; flex: none; margin: 0; }
+.water { min-width: 44px; text-align: center; font-size: 17px; }

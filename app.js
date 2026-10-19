@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v10';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v11';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -373,7 +373,7 @@ async function renderSync() {
 const QUICK_TABS = {
   한: { label: '한 일', ph: '연구 30', hint: '활동 이름과 분 (분은 빼도 돼요)' },
   밥: { label: '밥', ph: '점심 김치찌개', hint: '끼니와 메뉴' },
-  몸: { label: '몸', ph: '체력2 기분3', hint: '체력·기분 1~5 · 몸무게68.5 · 물5 · 걸음8000' },
+  몸: { label: '몸', ph: '', hint: '누르고 남기기 — 바꾼 값만 저장돼요' },
   목표: { label: '목표', ph: '산책 20분', hint: '🎯 오늘 목표에 바로 추가돼요' },
 };
 const QUICK_RE = /^(한|밥|몸|목표|메모)\s*[:：]?\s+(.+)$/;   // server.js applyQuick과 같은 규칙
@@ -381,6 +381,51 @@ const quickTab = () => (ls.get('quickTab') in QUICK_TABS ? ls.get('quickTab') : 
 function quickLines(text) {
   return String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
     .map(l => { const m = l.match(QUICK_RE); return m ? { kind: m[1], text: m[2].trim() } : { kind: '메모', text: l }; });
+}
+
+// 💪 몸 탭 — 입력할 값이 정해져 있어서 글 대신 버튼·숫자 칸으로 받고, 바뀐 값만 body 이벤트로 보낸다 (PC는 op set)
+const BODY_KEYS = ['energy', 'mood', 'weight', 'water', 'steps'];
+const BODY_OK = { weight: /^\d{2,3}(\.\d)?$/, steps: /^\d{1,6}$/ };   // server.js BODY_FIELDS와 같은 규칙
+function parseBodyText(text) {   // server.js parseBody와 같은 규칙 (quick의 "몸 …" 줄)
+  const out = {};
+  for (const [re, k] of [[/(?:체력|에너지)\s*([1-5])/, 'energy'], [/기분\s*([1-5])/, 'mood'], [/(?:몸무게|체중)\s*(\d{2,3}(?:\.\d)?)/, 'weight'], [/물\s*(\d{1,2})/, 'water'], [/걸음\s*(\d{1,6})/, 'steps']]) {
+    const m = String(text).match(re); if (m) out[k] = m[1];
+  }
+  return out;
+}
+// 오늘 몸 상태 = 스냅샷 값 + PC가 아직 반영하지 않은 내 기록
+function bodyNow(date) {
+  const day = state.snap && state.snap.days && state.snap.days[date];
+  const b = Object.fromEntries(BODY_KEYS.map(k => [k, String((day && day.body && day.body[k]) || '')]));
+  for (const e of pendingEvents(['body', 'quick']).filter(e => e.date === date)) {
+    if (e.type === 'body') { for (const k of BODY_KEYS) if (e.payload[k] != null && e.payload[k] !== '') b[k] = String(e.payload[k]); }
+    else for (const l of quickLines(e.payload.text)) if (l.kind === '몸') Object.assign(b, parseBodyText(l.text));
+  }
+  return b;
+}
+const bodyText = p => [p.energy && `체력 ${p.energy}`, p.mood && `기분 ${p.mood}`, p.weight && `몸무게 ${p.weight}kg`, p.water && `물 ${p.water}잔`, p.steps && `걸음 ${p.steps}`].filter(Boolean).join(' · ');
+function readBodyInputs() {
+  if (!state.body) return;
+  for (const k of ['weight', 'steps']) { const el = $('#body-' + k); if (el) state.body[k] = el.value.trim(); }
+}
+function drawBodyForm() {
+  const b = state.body || (state.body = bodyNow(today()));
+  const scale = (k, label) => `<div class="body-row"><span class="body-k">${label}</span><div class="chips">${[1, 2, 3, 4, 5].map(n =>
+    `<button class="chip-btn num ${b[k] === String(n) ? 'on' : ''}" data-body="${k}" data-n="${n}">${n}</button>`).join('')}</div></div>`;
+  $('#body-form').innerHTML = `${scale('energy', '체력')}${scale('mood', '기분')}
+    <div class="body-row"><span class="body-k">몸무게</span><input class="field body-in" id="body-weight" inputmode="decimal" placeholder="68.5" value="${esc(b.weight)}"><span class="muted small">kg</span></div>
+    <div class="body-row"><span class="body-k">물</span><button class="chip-btn num" data-water="-1" aria-label="물 한 잔 빼기">−</button>
+      <b class="water">${+b.water || 0}잔</b><button class="chip-btn num" data-water="1" aria-label="물 한 잔 더">+</button></div>
+    <div class="body-row"><span class="body-k">걸음</span><input class="field body-in" id="body-steps" inputmode="numeric" placeholder="8000" value="${esc(b.steps)}"></div>`;
+}
+async function saveBody() {
+  readBodyInputs();
+  const cur = bodyNow(today()), b = state.body || cur, diff = {};
+  for (const k of BODY_KEYS) if (b[k] !== '' && b[k] !== cur[k]) diff[k] = b[k];
+  for (const [k, re] of Object.entries(BODY_OK)) if (diff[k] && !re.test(diff[k])) { toast(k === 'weight' ? '몸무게는 68.5처럼 적어 주세요' : '걸음은 숫자로 적어 주세요'); return; }
+  if (!Object.keys(diff).length) { toast('바꾼 값이 없어요'); return; }
+  state.body = null;
+  await record('body', diff); toast('💪 남겼어요');
 }
 
 // 목표 탭으로 남긴 목표(quick의 "목표 …" 줄)도 PC 병합 전에 바로 보이게 덧붙인다
@@ -703,8 +748,12 @@ function drawLog() {
     `<button class="chip-btn ${k === tab ? 'on' : ''}" role="tab" aria-selected="${k === tab}" data-qtab="${k}">${v.label}</button>`).join('');
   $('#quick').placeholder = '예) ' + QUICK_TABS[tab].ph;
   $('#quick-hint').textContent = QUICK_TABS[tab].hint;
-  $('#log').innerHTML = todays('quick').flatMap(e => quickLines(e.payload.text).map(l => `<li><span>${esc(e.hm)}</span>
-    <span class="badge">${esc(l.kind === '한' ? '한 일' : l.kind)}</span><b>${esc(l.text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`)).join('');
+  $('#quick').hidden = tab === '몸';
+  $('#body-form').hidden = tab !== '몸';
+  if (tab === '몸') { readBodyInputs(); drawBodyForm(); }
+  const li = (e, kind, text) => `<li><span>${esc(e.hm)}</span><span class="badge">${esc(kind)}</span><b>${esc(text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`;
+  $('#log').innerHTML = state.events.filter(e => (e.type === 'quick' || e.type === 'body') && e.date === today()).sort((a, b) => b.ts - a.ts)
+    .flatMap(e => e.type === 'body' ? [li(e, '몸', bodyText(e.payload))] : quickLines(e.payload.text).map(l => li(e, l.kind === '한' ? '한 일' : l.kind, l.text))).join('');
   const goals = goalsFor(today());
   $('#goals-card').hidden = !goals.length;
   $('#goals').innerHTML = goals.map((g, i) => `<li class="${g.done ? 'done' : ''} ${g.depth ? 'sub' : ''}">
@@ -732,7 +781,9 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'run') { if ((ls.get('resting') || {}).back) ls.set('resting', null); startCount(d.tid); location.hash = '#run'; return; }
   if (d.act === 'back-home') { ls.set('resting', null); location.hash = ''; return; }
   if (d.act === 'back-start') { ls.set('resting', null); return; }   // 링크는 그대로 #start로
-  if (d.qtab) { ls.set('quickTab', d.qtab); drawLog(); $('#quick').focus(); return; }
+  if (d.qtab) { ls.set('quickTab', d.qtab); state.body = null; drawLog(); if (d.qtab !== '몸') $('#quick').focus(); return; }
+  if (d.body) { readBodyInputs(); state.body[d.body] = d.n; drawBodyForm(); return; }
+  if (d.water) { readBodyInputs(); state.body.water = String(Math.max(0, Math.min(99, (+state.body.water || 0) + +d.water))); drawBodyForm(); return; }
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
   // 쉬기
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
@@ -837,6 +888,7 @@ $('#btn-joy').onclick = async () => {
 };
 $('#btn-quick').onclick = async () => {
   const tab = quickTab();
+  if (tab === '몸') { await saveBody(); return; }
   const lines = $('#quick').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
     .map(l => (QUICK_RE.test(l) ? l : `${tab} ${l}`));   // 직접 접두어를 쓴 줄(메모 … 등)은 그대로
   if (!lines.length) return;
@@ -906,6 +958,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
     if (q.get('rest')) { const [en, tm] = q.get('rest').split('-'); state.rest = { energy: en, time: +tm }; }
     // 타이머 확인용: &sec=N (실행·쉼 타이머를 N초로) · &phase=run (카운트다운 건너뜀) · &delays=N · &end=1 (쉼 시간 다 됨) · &back=1 (쉼 → 일 전환 카드)
     state.demoSec = +q.get('sec') || 0;
+    if (q.get('tab')) ls.set('quickTab', q.get('tab'));   // &tab=몸 → 기록 카드의 그 탭
     const now = Date.now();
     ls.set('resting', null); ls.set('run', null);
     if (q.get('resting')) {
