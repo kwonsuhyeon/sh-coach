@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.dropboxapi.com https://content.dropboxapi.com; style-src 'self' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data:">
+<meta name="theme-color" content="#f9f9f7">
+<title>SH 코치</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div>
+    <div class="date" id="date"></div>
+    <h1>지금 무엇이 필요할까?</h1>
+  </div>
+  <span class="chip" id="sync" hidden></span>
+</header>
+
+<main id="main">
+  <section class="card" id="connect" hidden>
+    <h2>Dropbox 연결</h2>
+    <p class="muted">기록은 Dropbox의 <b>Apps/sh-coach</b> 폴더 하나에만 저장돼요. 다른 파일은 볼 수 없어요.</p>
+    <button class="btn primary" id="btn-connect">Dropbox 연결</button>
+  </section>
+
+  <div class="band" id="reconnect" hidden>Dropbox 연결이 끊겼어요. 기록은 폰에 모아 둘게요. <button class="link" id="btn-reconnect">다시 연결</button></div>
+
+  <section class="card" id="goals-card" hidden>
+    <h2>🎯 오늘 목표</h2>
+    <ul class="goals" id="goals"></ul>
+  </section>
+
+  <section class="card" id="quick-card">
+    <h2>⚡ 한 줄 기록</h2>
+    <textarea id="quick" rows="4" placeholder="예) 한 연구 30&#10;밥 점심 김치찌개&#10;몸 체력2 기분3&#10;그냥 쓰면 메모"></textarea>
+    <div class="row">
+      <span class="muted small">접두어: 한 · 밥 · 몸 · 목표 (없으면 메모)</span>
+      <button class="btn primary" id="btn-quick">남기기</button>
+    </div>
+    <ul class="log" id="log"></ul>
+  </section>
+
+  <section class="card" id="reading-card" hidden>
+    <h2>📚 오늘의 논문</h2>
+    <div id="reading"></div>
+  </section>
+</main>
+
+<footer class="foot">
+  <span id="pc-sync"></span>
+  <button class="link" id="btn-settings">설정</button>
+</footer>
+
+<dialog id="settings">
+  <h2>설정</h2>
+  <p class="muted small" id="settings-info"></p>
+  <div class="row">
+    <button class="btn" id="btn-disconnect">연결 끊기</button>
+    <button class="btn primary" id="btn-close">닫기</button>
+  </div>
+</dialog>
+
+<div class="toast" id="toast"></div>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
