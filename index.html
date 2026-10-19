@@ -15,8 +15,9 @@
 <body>
 <header class="top">
   <div>
+    <button class="back" id="btn-back" hidden aria-label="처음으로">‹ 처음</button>
     <div class="date" id="date"></div>
-    <h1>지금 무엇이 필요할까?</h1>
+    <h1 id="title">지금 무엇이 필요할까?</h1>
   </div>
   <span class="chip" id="sync" hidden></span>
 </header>
@@ -38,25 +39,84 @@
 
   <div class="band" id="reconnect" hidden>Dropbox 연결이 끊겼어요. 기록은 폰에 모아 둘게요. <button class="link" id="btn-reconnect">다시 연결</button></div>
 
-  <section class="card" id="goals-card" hidden>
-    <h2>🎯 오늘 목표</h2>
-    <ul class="goals" id="goals"></ul>
-  </section>
+  <!-- ===== 처음: 세 갈래 ===== -->
+  <div class="view" id="v-home">
+    <section class="card review" id="review-card" hidden></section>
+    <section class="card next" id="next-card" hidden></section>
+    <nav class="menu">
+      <a class="menu-btn m-rest" href="#rest"><span class="emo">🌿</span><b>쉬기</b><small>지금 상태에 맞는 쉼</small></a>
+      <a class="menu-btn m-start" href="#start"><span class="emo">▶</span><b>시작하기</b><small>할 일을 첫 행동으로</small></a>
+      <a class="menu-btn m-log" href="#log"><span class="emo">🧺</span><b>정리하기</b><small>기록 · 작은 즐거움 · 목표</small></a>
+    </nav>
+    <p class="joy-line" id="joy-line"></p>
+  </div>
 
-  <section class="card" id="quick-card">
-    <h2>⚡ 한 줄 기록</h2>
-    <textarea id="quick" rows="4" placeholder="예) 한 연구 30&#10;밥 점심 김치찌개&#10;몸 체력2 기분3&#10;그냥 쓰면 메모"></textarea>
-    <div class="row">
-      <span class="muted small">접두어: 한 · 밥 · 몸 · 목표 (없으면 메모)</span>
-      <button class="btn primary" id="btn-quick">남기기</button>
-    </div>
-    <ul class="log" id="log"></ul>
-  </section>
+  <!-- ===== 🌿 쉬기 ===== -->
+  <div class="view" id="v-rest" hidden>
+    <section class="card" id="rest-pick">
+      <h2>지금 에너지는?</h2>
+      <div class="chips" id="rest-energy">
+        <button class="chip-btn" data-v="low">낮음</button><button class="chip-btn" data-v="mid">보통</button><button class="chip-btn" data-v="refresh">기분 전환 필요</button>
+      </div>
+      <h2 class="mt">쉴 수 있는 시간은?</h2>
+      <div class="chips" id="rest-time">
+        <button class="chip-btn" data-v="5">5분</button><button class="chip-btn" data-v="10">10분</button><button class="chip-btn" data-v="30">30분</button>
+      </div>
+      <div id="rest-suggest"></div>
+    </section>
+    <section class="card resting" id="rest-now" hidden></section>
+  </div>
 
-  <section class="card" id="reading-card" hidden>
-    <h2>📚 오늘의 논문</h2>
-    <div id="reading"></div>
-  </section>
+  <!-- ===== ▶ 시작하기 ===== -->
+  <div class="view" id="v-start" hidden>
+    <section class="card" id="reading-card" hidden>
+      <h2>📚 오늘의 논문</h2>
+      <div id="reading"></div>
+    </section>
+    <section class="card" id="flow"></section>
+    <section class="card" id="tasks-card" hidden>
+      <h2>📋 이어서 할 수 있는 일</h2>
+      <ul class="tasks" id="tasks"></ul>
+    </section>
+  </div>
+
+  <!-- ===== 실행 (지금 5분) ===== -->
+  <div class="view" id="v-run" hidden>
+    <section class="card run" id="run"></section>
+  </div>
+
+  <!-- ===== 🧺 정리하기 ===== -->
+  <div class="view" id="v-log" hidden>
+    <section class="card joy">
+      <h2>✨ 오늘의 작은 즐거움</h2>
+      <p class="muted small">사소해도 좋아요. 이것 하나만 남겨도 오늘 기록이에요.</p>
+      <div class="inline"><input class="field" id="joy" placeholder="예) 퇴근길 노을이 예뻤다" maxlength="200"><button class="btn primary" id="btn-joy">남기기</button></div>
+      <ul class="log" id="joy-list"></ul>
+    </section>
+
+    <section class="card" id="quick-card">
+      <h2>⚡ 한 줄 기록</h2>
+      <textarea id="quick" rows="3" placeholder="예) 한 연구 30&#10;밥 점심 김치찌개&#10;몸 체력2 기분3 (그냥 쓰면 메모)"></textarea>
+      <div class="row">
+        <span class="muted small">접두어: 한 · 밥 · 몸 · 목표</span>
+        <button class="btn primary" id="btn-quick">남기기</button>
+      </div>
+      <ul class="log" id="log"></ul>
+    </section>
+
+    <section class="card" id="goals-card" hidden>
+      <h2>🎯 오늘 목표</h2>
+      <ul class="goals" id="goals"></ul>
+    </section>
+
+    <section class="card" id="dump-card">
+      <h2>🧺 머릿속 비우기</h2>
+      <p class="muted small">걸린 일을 한 줄씩 쏟아내고, 하나씩 어떻게 할지만 골라요.</p>
+      <textarea id="dump" rows="3" placeholder="예) 교수님께 메일&#10;학회 등록비 결제&#10;발표 자료 초안"></textarea>
+      <div class="row"><span></span><button class="btn primary" id="btn-dump">할 일로 옮기기</button></div>
+      <ul class="tasks" id="dump-list"></ul>
+    </section>
+  </div>
 </main>
 
 <footer class="foot">

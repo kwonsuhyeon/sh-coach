@@ -69,3 +69,55 @@ dialog::backdrop { background: rgba(0, 0, 0, .25); }
 .field { width: 100%; font: inherit; border: 1px solid var(--line); border-radius: 10px; padding: 10px; margin: 6px 0; background: #fff; }
 .field:focus { outline: 2px solid var(--blue-soft); border-color: var(--blue); }
 dialog .row { flex-wrap: wrap; }
+
+/* ===== 단계 2: 세 갈래 · 흐름 ===== */
+.back { font: inherit; font-size: 14px; background: none; border: 0; color: var(--blue); padding: 0 0 4px; cursor: pointer; }
+.mt, .card .mt { margin-top: 14px; }
+.menu { display: grid; gap: 12px; margin: 12px 0; }
+.menu-btn { display: grid; grid-template-columns: 52px 1fr; grid-template-rows: auto auto; align-items: center; column-gap: 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 16px; color: var(--ink); text-decoration: none; }
+.menu-btn .emo { grid-row: 1 / 3; font-size: 30px; width: 52px; height: 52px; border-radius: 14px; display: grid; place-items: center; }
+.menu-btn b { font-size: 19px; }
+.menu-btn small { color: var(--muted); font-size: 13px; }
+.menu-btn.m-rest .emo { background: #eaf6ee; }
+.menu-btn.m-start .emo { background: var(--blue-soft); color: var(--blue); }
+.menu-btn.m-log .emo { background: var(--orange-soft); }
+.joy-line { text-align: center; color: var(--muted); font-size: 14px; margin: 6px 0 0; }
+.joy-line a { color: var(--orange); text-decoration: none; }
+.joy-line b { color: var(--orange); }
+.card.review { border-color: var(--orange); }
+.card.next { border-color: var(--blue); }
+.next-title { font-weight: 700; font-size: 17px; margin: 4px 0; }
+.next-step { background: var(--blue-soft); border-radius: 10px; padding: 8px 10px; font-size: 15px; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip-btn { font: inherit; font-size: 15px; border: 1px solid var(--line); background: #fff; color: var(--ink); border-radius: 999px; padding: 8px 14px; cursor: pointer; }
+.chip-btn.on { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+.small-chips .chip-btn { font-size: 13px; padding: 6px 11px; }
+.pick { display: grid; gap: 8px; }
+.pick-btn { font: inherit; font-size: 16px; text-align: left; border: 1px solid var(--line); background: #fff; border-radius: 12px; padding: 14px; cursor: pointer; }
+.pick-btn.reserved { border-color: var(--orange); background: var(--orange-soft); }
+.resting-label { font-size: 24px; font-weight: 700; margin: 6px 0; }
+
+.inline { display: flex; gap: 8px; align-items: center; }
+.inline .field { flex: 1; margin: 0; }
+.steps { padding-left: 22px; margin: 6px 0; }
+.steps li { margin: 6px 0; }
+.steps li { display: list-item; }
+.steps li > * { vertical-align: middle; }
+.step-text { width: calc(100% - 96px); display: inline-block; margin: 0; padding: 8px; }
+.step-meta { display: inline-flex; align-items: center; gap: 2px; font-size: 13px; color: var(--muted); }
+.step-min { width: 40px; padding: 8px 4px; margin: 0; text-align: center; }
+.x { font: inherit; border: 0; background: none; color: var(--muted); font-size: 20px; cursor: pointer; padding: 0 4px; }
+.decide { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.decide .btn.primary { grid-column: 1 / 3; padding: 12px; }
+.tasks { list-style: none; margin: 0; padding: 0; }
+.tasks li { border-top: 1px solid var(--line); }
+.tasks li:first-child { border-top: 0; }
+.task { font: inherit; width: 100%; text-align: left; background: none; border: 0; padding: 10px 0; display: flex; justify-content: space-between; gap: 8px; cursor: pointer; color: var(--ink); }
+.badge { font-size: 12px; background: #f0f0ee; color: var(--muted); border-radius: 999px; padding: 2px 8px; white-space: nowrap; align-self: center; }
+.tasks li.dump { padding: 10px 0; }
+.tasks li.dump b { display: block; margin-bottom: 6px; }
+
+.run-step { font-size: 22px; font-weight: 700; margin: 10px 0 6px; line-height: 1.4; }
+.timer { font-size: 40px; font-weight: 700; color: var(--blue); font-variant-numeric: tabular-nums; margin: 8px 0; }
