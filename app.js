@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v8';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v9';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -466,9 +466,9 @@ function drawStart() {
       <div class="chips small-chips mt"><button class="chip-btn ${f.device === 'phone' ? 'on' : ''}" data-device="phone">📱 폰만</button><button class="chip-btn ${f.device === 'pc' ? 'on' : ''}" data-device="pc">💻 PC 있음</button></div>
       <h2 class="mt">첫 행동</h2>
       <ol class="steps">${f.steps.map((s, i) => `<li class="${s.done ? 'done' : ''}">
-        <input class="field step-text" data-step="${i}" value="${esc(s.text)}" aria-label="단계 ${i + 1}">
-        <span class="step-meta">${s.pc ? '💻' : ''}<input class="field step-min" data-min="${i}" value="${s.min || ''}" inputmode="numeric" aria-label="분">분</span>
-        <button class="x" data-del="${i}" aria-label="지우기">×</button></li>`).join('')}</ol>
+        <textarea class="field step-text" data-step="${i}" rows="1" aria-label="단계 ${i + 1}">${esc(s.text)}</textarea>
+        <span class="step-meta">${s.pc ? '💻 PC' : ''}<input class="field step-min" data-min="${i}" value="${s.min || ''}" inputmode="numeric" aria-label="분">분
+        <button class="x" data-del="${i}" aria-label="지우기">×</button></span></li>`).join('')}</ol>
       <button class="link" data-act="step-add">+ 단계 추가</button>
       ${f.choosing ? decideExtra(f) : `<h2 class="mt">언제 할까요?</h2>
       <div class="decide">
@@ -484,7 +484,10 @@ function drawStart() {
   $('#tasks-card').hidden = !list.length;
   $('#tasks').innerHTML = list.map(t => `<li><button class="task" data-open-task="${t.id}"><b>${esc(t.title)}</b>
     <span class="badge">${esc(t.status)}${t.when ? ' · ' + esc(t.when) : ''}</span></button></li>`).join('');
+  document.querySelectorAll('.step-text').forEach(fitText);
 }
+// 단계 칸 높이를 문장 길이에 맞춘다 (field-sizing을 모르는 브라우저용)
+function fitText(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 2 + 'px'; }
 // 시작하기 빈 화면의 "자주 하던 일" — 사전의 일·생활 중 최근 기록이 많은 것
 const quickActs = () => activities().filter(a => a.type !== '쉼').sort((x, y) => (y.count || 0) - (x.count || 0)).slice(0, 6);
 function decideExtra(f) {
@@ -650,13 +653,14 @@ $('#main').addEventListener('click', async e => {
 // 단계 문장·분 고치기 (입력 중에는 다시 그리지 않는다)
 $('#main').addEventListener('input', e => {
   const f = state.flow; if (!f) return;
-  if (e.target.dataset.step !== undefined) { f.steps[+e.target.dataset.step].text = e.target.value; f.edited = true; }
+  if (e.target.dataset.step !== undefined) { f.steps[+e.target.dataset.step].text = e.target.value.replace(/\n/g, ' '); f.edited = true; fitText(e.target); }
   if (e.target.dataset.min !== undefined) { const m = parseInt(e.target.value, 10); f.steps[+e.target.dataset.min].min = m > 0 ? m : null; f.edited = true; }
 });
 $('#main').addEventListener('keydown', e => {
   if (e.key !== 'Enter' || e.isComposing) return;
   if (e.target.id === 'flow-title') { e.preventDefault(); document.querySelector('[data-act="flow-new"]').click(); }
   if (e.target.id === 'joy') { e.preventDefault(); $('#btn-joy').click(); }
+  if (e.target.dataset.step !== undefined) e.preventDefault();   // 단계는 한 문장 — 줄바꿈 대신 칸이 알아서 늘어난다
 });
 
 $('#btn-connect').onclick = () => dbx.login();
