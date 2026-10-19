@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v4';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v5';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -110,6 +110,13 @@ const dbx = {
     if (r.ok) return true;
     if (r.status === 409 && /conflict/.test(await r.text())) return true;
     throw new Error('net');
+  },
+  // 클라우드 앱 폴더에 실제로 있는 파일 (설정 창 진단용 — PC Dropbox가 snapshot.json을 올렸는지 확인)
+  async list(p = '') {
+    const r = await this.call('https://api.dropboxapi.com/2/files/list_folder', { 'Content-Type': 'application/json' },
+      JSON.stringify({ path: this.path(p) }));
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return (await r.json()).entries.map(e => e['.tag'] === 'folder' ? e.name + '/' : `${e.name} (${(e.server_modified || '').slice(11, 16)} UTC)`);
   },
   async logout() {
     try { await this.call('https://api.dropboxapi.com/2/auth/token/revoke', {}); } catch {}
@@ -266,6 +273,13 @@ $('#btn-settings').onclick = async () => {
     (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '') + ` · 앱 ${APP_VERSION}` +
     (state.snapErr ? ` · 요약: ${state.snapErr}` : '');
   $('#settings').showModal();
+  if (state.connected && navigator.onLine) {
+    try {
+      const root = await dbx.list('');
+      const ev = await dbx.list('/events').catch(() => []);
+      $('#settings-info').textContent += ` · 클라우드: ${root.join(', ') || '(비어 있음)'} · events: ${ev.filter(n => !n.endsWith('/')).length}건 대기`;
+    } catch (e) { $('#settings-info').textContent += ` · 클라우드 확인 실패: ${e.message}`; }
+  }
 };
 $('#btn-close').onclick = () => $('#settings').close();
 $('#pc-sync').onclick = async () => { $('#pc-sync').textContent = '받는 중…'; await loadSnapshot(); render(); flush(); };
