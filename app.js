@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v12';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v13';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -331,13 +331,24 @@ function buildSteps(kind, obstacle, device) {
   return steps;
 }
 // 이어서 할 일 — 지금 진행 중이거나, 다시 볼 날이 된 것
+// 다시 보여 줄 시각 (ms). "HH:MM" = 정한 날의 그 시각 · "날짜 HH:MM" = 그때 · "날짜" = 그날(3시 컷오프) 0시부터 · 없으면 바로
+function dueAt(t) {
+  const w = String(t.when || '');
+  if (/^\d{2}:\d{2}$/.test(w)) { const d = new Date(t.decidedTs || Date.now()); d.setHours(+w.slice(0, 2), +w.slice(3), 0, 0); return d.getTime(); }
+  if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(w)) return new Date(w.replace(' ', 'T') + ':00').getTime();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(w)) return w <= today() ? 0 : Infinity;
+  return 0;
+}
+// 이어서 할 일 — 지금 진행 중이거나, 정한 시각·날짜가 된 것 (그 전에는 처음 화면에 띄우지 않는다)
 function dueTasks() {
-  const T = today();
+  const now = Date.now();
   const rank = { 진행: 0, '오늘 나중에': 1, 예약: 2, 보류: 3 };
-  return openTasks().filter(t => t.status === '진행' || t.status === '오늘 나중에' ||
-      (['예약', '보류'].includes(t.status) && t.when && t.when.slice(0, 10) <= T))
+  return openTasks().filter(t => t.status === '진행' || (t.status in rank && (t.status === '오늘 나중에' || t.when) && dueAt(t) <= now))
     .sort((a, b) => rank[a.status] - rank[b.status] || String(a.when || '').localeCompare(String(b.when || '')));
 }
+// 아직 때가 안 된 예약 — 처음 화면에 "다음 예약" 한 줄로만
+const upcomingTasks = () => openTasks().filter(t => ['오늘 나중에', '예약', '보류'].includes(t.status) && t.when && dueAt(t) > Date.now())
+  .sort((a, b) => String(a.when).localeCompare(String(b.when)));
 // 오늘 남은 빈 시간 (시간표 기준) — "오늘 나중에" 제안용
 function freeSlots() {
   const tt = state.snap && state.snap.timetable;
@@ -477,11 +488,15 @@ function drawHome() {
   nc.hidden = !nx;
   if (nx) {
     const step = nx.steps.find(s => !s.done);
-    nc.innerHTML = `<div class="muted small">이어서 할 첫 행동 · ${esc(nx.status)}${nx.when ? ' ' + esc(nx.when) : ''}</div>
+    // 폰 폭(약 340px)에 버튼 셋은 글자가 꺾인다 → "다시 정하기"는 위 줄 오른쪽 링크, 아래는 두 버튼
+    nc.innerHTML = `<div class="next-head"><span class="muted small">이어서 할 첫 행동 · ${esc(nx.status)}${nx.when ? ' ' + esc(nx.when) : ''}</span>
+        <button class="link small" data-act="redo" data-tid="${nx.id}">다시 정하기</button></div>
       <div class="next-title">${esc(nx.title)}</div>
       ${step ? `<div class="next-step">${step.pc ? '💻 ' : ''}${esc(step.text)}${step.min ? ` <span class="muted">(${step.min}분)</span>` : ''}</div>` : ''}
-      <div class="row"><button class="btn" data-act="redo" data-tid="${nx.id}">다시 정하기</button><button class="btn done" data-act="task-done" data-tid="${nx.id}">✓ 했어요</button><button class="btn primary" data-act="run" data-tid="${nx.id}">▶ 5분 시작</button></div>`;
+      <div class="row two"><button class="btn done" data-act="task-done" data-tid="${nx.id}">✓ 했어요</button><button class="btn primary" data-act="run" data-tid="${nx.id}">▶ 5분 시작</button></div>`;
   }
+  const up = upcomingTasks();
+  $('#plan-line').innerHTML = up.length ? `<a href="#start">⏰ 예약 ${up.length}개 · 다음 ${esc(up[0].when)} ${esc(up[0].title)}</a>` : '';
   $('#menu-paper-sub').textContent = readingSub();
   const n = todays('joy').length;
   $('#joy-line').innerHTML = n ? `✨ 오늘의 작은 즐거움 <b>${n}</b>개` : `<a href="#log">✨ 오늘의 작은 즐거움, 하나 남겨 볼까요?</a>`;
@@ -631,8 +646,14 @@ function decideExtra(f) {
       <button class="link mt" data-when="">시간은 안 정할래요</button> · <button class="link" data-act="choose-back">돌아가기</button>`;
   }
   const label = f.choosing === 'date' ? '언제 다시 볼까요?' : '다시 볼 날 (선택)';
-  return `<h2 class="mt">${label}</h2><div class="inline"><input class="field" type="date" id="when-date" value="${addDaysStr(today(), 1)}">
-    <button class="btn primary" data-act="when-ok">정하기</button></div>
+  // 내일·모레는 3시 컷오프 기준 — 새벽 1시에 "내일"을 누르면 자고 일어난 날
+  const dayChip = n => { const v = addDaysStr(today(), n), d = new Date(v + 'T12:00:00');
+    return `<button class="chip-btn" data-pick-date="${v}">${n === 1 ? '내일' : '모레'} ${d.getMonth() + 1}/${d.getDate()} ${WD[d.getDay()]}</button>`; };
+  return `<h2 class="mt">${label}</h2><div class="chips">${dayChip(1)}${dayChip(2)}</div>
+    <div class="when-grid mt"><input class="field" type="date" id="when-date" value="${addDaysStr(today(), 1)}" aria-label="날짜">
+      <input class="field" type="time" id="when-date-time" aria-label="시각 (선택)"></div>
+    <p class="muted small">시각은 비워도 돼요. 정하면 그 시각부터, 비우면 그날 하루 동안 처음 화면에 떠요.</p>
+    <div class="row"><span></span><button class="btn primary" data-act="when-ok">정하기</button></div>
     ${f.choosing === 'hold' ? '<button class="link mt" data-when="">날짜 없이 보류</button> · ' : ''}<button class="link" data-act="choose-back">돌아가기</button>`;
 }
 async function decide(decision, when = '') {
@@ -753,6 +774,13 @@ function clock() {
     if (now < r.endAt) { active = true; const el = $('#rest-timer'); if (el) el.textContent = fmt(r.endAt - now); }
     else { ls.set('resting', { ...r, ending: true, timeUp: true, endedAt: r.endAt }); if (now - r.endAt <= LATE_MS) alarm(); redraw('rest'); }
   }
+  // 처음 화면: 예약해 둔 시각이 되면 이어서 할 일 카드를 새로 그린다 (15초마다 확인)
+  if (view() === '' && now - (state.dueCheck || 0) > 15000) {
+    state.dueCheck = now;
+    const key = dueTasks().map(t => t.id).join();
+    if (state.dueKey !== undefined && key !== state.dueKey) drawHome();
+    state.dueKey = key;
+  }
   keepAwake(active);
 }
 
@@ -855,8 +883,11 @@ $('#main').addEventListener('click', async e => {
   }
   if (f && d.act === 'choose-back') { f.choosing = null; drawStart(); return; }
   if (f && d.when !== undefined) { const c = f.choosing; f.choosing = null; await decide(c, d.when); return; }
+  if (f && d.pickDate) { $('#when-date').value = d.pickDate; document.querySelectorAll('[data-pick-date]').forEach(x => x.classList.toggle('on', x === b)); return; }
   if (f && d.act === 'when-ok') {
-    const c = f.choosing; const v = c === 'later' ? $('#when-time').value : $('#when-date').value;
+    const c = f.choosing;
+    const tm = c === 'later' ? '' : $('#when-date-time').value;
+    const v = c === 'later' ? $('#when-time').value : $('#when-date').value + ($('#when-date').value && tm ? ' ' + tm : '');
     if (!v) { toast(c === 'later' ? '시간을 골라 주세요' : '날짜를 골라 주세요'); return; }
     f.choosing = null; await decide(c, v); return;
   }

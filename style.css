@@ -161,3 +161,11 @@ dialog h3 { margin: 14px 0 8px; }
 .done-chip { flex: none; font-size: 13px; padding: 6px 10px; }
 .menu-btn.m-paper .emo { background: var(--paper-soft); }
 .decide .btn.done { grid-column: auto; }
+
+/* ===== v13: 폰 폭 버튼 · 예약 ===== */
+.next-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.next-head .link { flex: none; font-size: 13px; }
+.row.two .btn { flex: 1; white-space: nowrap; text-align: center; padding-left: 8px; padding-right: 8px; }
+.when-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8px; }
+.when-grid .field { margin: 0; min-width: 0; }
+.plan-line a { color: var(--muted); text-decoration: none; }

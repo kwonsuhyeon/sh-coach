@@ -1,7 +1,7 @@
 // 서비스 워커 — 앱 화면 파일만 캐시해서 지하철·비행기 모드에서도 열리게 한다.
 // Dropbox API 요청은 가로채지 않는다 (기록 대기열은 app.js가 IndexedDB로 따로 관리).
 // 화면 파일을 고치면 VERSION을 올린다 → 다음 실행 때 새 파일로 바뀐다.
-const VERSION = 'coach-v12';
+const VERSION = 'coach-v13';
 const SHELL = ['./', 'index.html', 'app.js', 'style.css', 'config.js', 'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'];
 
 self.addEventListener('install', e => {
