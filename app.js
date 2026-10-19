@@ -5,6 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
+const APP_VERSION = 'v3';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -262,7 +263,8 @@ $('#reading').onclick = async e => {
 $('#btn-settings').onclick = async () => {
   const ev = await idb.events();
   $('#settings-info').textContent = `${state.connected ? 'Dropbox 연결됨' : '연결 안 됨'} · 폰에 있는 기록 ${ev.length}건 (올리지 못한 것 ${ev.filter(e => !e.sent).length}건)` +
-    (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '');
+    (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '') + ` · 앱 ${APP_VERSION}` +
+    (state.snapErr ? ` · 요약: ${state.snapErr}` : '');
   $('#settings').showModal();
 };
 $('#btn-close').onclick = () => $('#settings').close();
@@ -277,7 +279,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
 
 // ============ 시작 ============
 (async () => {
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   const justLoggedIn = await dbx.finishLogin();
   state.connected = !!(await idb.get('auth'));
   // 개발 서버 전용 미리보기: localhost/?demo → 같은 폴더의 demo-snapshot.json으로 화면만 그린다 (공개 주소에서는 꺼짐)
