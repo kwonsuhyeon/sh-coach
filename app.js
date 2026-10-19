@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v5';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v6';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -136,15 +136,39 @@ async function record(type, payload = {}) {
   return ev;
 }
 
+// ============ 종단간 암호화 (PC daily-wiki/server/coach-crypto.js와 같은 규칙) ============
+// 열쇠 = PBKDF2-SHA256(암호 문구, "sh-coach-v1", 200,000회) → AES-GCM 256. 문구는 저장하지 않고,
+// 꺼낼 수 없는(non-extractable) 열쇠 객체만 IndexedDB에 둔다. Dropbox에는 암호문만 올라간다.
+const cryptoBox = {
+  async derive(pass) {
+    const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass.normalize('NFC')), 'PBKDF2', false, ['deriveKey']);
+    return crypto.subtle.deriveKey({ name: 'PBKDF2', salt: new TextEncoder().encode('sh-coach-v1'), iterations: 200000, hash: 'SHA-256' },
+      base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  },
+  async seal(key, text) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(text));
+    return { v: 1, enc: 'aesgcm', iv: b64(iv), ct: b64(ct) };
+  },
+  async open(key, box) {
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(box.iv) }, key, unb64(box.ct));   // 열쇠가 틀리면 예외
+    return new TextDecoder().decode(pt);
+  },
+};
+function b64(buf) { let s = ''; for (const c of new Uint8Array(buf)) s += String.fromCharCode(c); return btoa(s); }
+function unb64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
+
 let flushing = false;
 async function flush() {
-  if (flushing || !navigator.onLine || !(await idb.get('auth'))) { renderSync(); return; }
+  // 열쇠가 없으면 올리지 않는다 (평문을 Dropbox에 남기지 않게) — 폰 안에 모아 둔다
+  const key = await idb.get('key');
+  if (flushing || !navigator.onLine || !(await idb.get('auth')) || !key) { renderSync(); return; }
   flushing = true;
   try {
     const all = (await idb.events()).filter(e => !e.sent).sort((a, b) => a.ts - b.ts);
     for (const ev of all) {
       const { file, sent, ...body } = ev;
-      await dbx.uploadNew(file, JSON.stringify(body));
+      await dbx.uploadNew(file, JSON.stringify(await cryptoBox.seal(key, JSON.stringify(body))));
       await idb.putEvent({ ...ev, sent: true });
     }
     state.revoked = false;
@@ -171,7 +195,16 @@ async function loadSnapshot() {
   try {
     const t = await dbx.download('/snapshot.json');
     state.snapErr = t ? '' : '없음';
-    if (t) { state.snap = JSON.parse(t); await idb.set('snapshot', state.snap); }
+    if (t) {
+      const box = JSON.parse(t);
+      const key = await idb.get('key');
+      if (box.enc !== 'aesgcm') state.snapErr = 'PC가 아직 암호화 전 (PC 암호 문구 필요)';   // 평문 요약은 쓰지 않는다
+      else if (!key) state.snapErr = '암호 문구 필요';
+      else {
+        try { state.snap = JSON.parse(await cryptoBox.open(key, box)); await idb.set('snapshot', state.snap); }
+        catch { state.snapErr = '암호 문구가 PC와 달라요'; }
+      }
+    }
   } catch (e) {
     if (e.message === 'revoked') state.revoked = true;
     state.snapErr = e.message || String(e);   // 화면 아래에 보여 준다 (원인 찾기용)
@@ -193,7 +226,7 @@ async function renderSync() {
   const chip = $('#sync');
   chip.hidden = !state.connected;
   if (!navigator.onLine) { chip.className = 'chip off'; chip.textContent = waiting ? `오프라인 · 올릴 기록 ${waiting}건` : '오프라인'; }
-  else if (waiting) { chip.className = 'chip wait'; chip.textContent = `올릴 기록 ${waiting}건`; }
+  else if (waiting) { chip.className = 'chip wait'; chip.textContent = state.hasKey ? `올릴 기록 ${waiting}건` : `암호 문구 정하면 올림 ${waiting}건`; }
   else { chip.className = 'chip'; chip.textContent = '모두 올림'; }
   $('#reconnect').hidden = !state.revoked;
   const log = $('#log');
@@ -220,6 +253,7 @@ function draw() {
   const d = logicalNow();
   $('#date').textContent = `${d.getMonth() + 1}월 ${d.getDate()}일 ${WD[d.getDay()]}요일`;
   $('#connect').hidden = state.connected;
+  $('#keycard').hidden = !state.connected || (state.hasKey && !state.rekey);
 
   const goals = goalsFor(today());
   $('#goals-card').hidden = !goals.length;
@@ -269,7 +303,7 @@ $('#reading').onclick = async e => {
 };
 $('#btn-settings').onclick = async () => {
   const ev = await idb.events();
-  $('#settings-info').textContent = `${state.connected ? 'Dropbox 연결됨' : '연결 안 됨'} · 폰에 있는 기록 ${ev.length}건 (올리지 못한 것 ${ev.filter(e => !e.sent).length}건)` +
+  $('#settings-info').textContent = `${state.connected ? 'Dropbox 연결됨' : '연결 안 됨'} · ${state.hasKey ? '🔐 암호화 켜짐' : '암호 문구 없음'} · 폰에 있는 기록 ${ev.length}건 (올리지 못한 것 ${ev.filter(e => !e.sent).length}건)` +
     (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '') + ` · 앱 ${APP_VERSION}` +
     (state.snapErr ? ` · 요약: ${state.snapErr}` : '');
   $('#settings').showModal();
@@ -283,6 +317,18 @@ $('#btn-settings').onclick = async () => {
 };
 $('#btn-close').onclick = () => $('#settings').close();
 $('#pc-sync').onclick = async () => { $('#pc-sync').textContent = '받는 중…'; await loadSnapshot(); render(); flush(); };
+$('#btn-key').onclick = async () => {
+  const p = $('#pass').value, p2 = $('#pass2').value;
+  if (p.length < 8) { $('#key-msg').textContent = '8자 이상으로 정해 주세요'; return; }
+  if (p !== p2) { $('#key-msg').textContent = '두 칸이 서로 달라요'; return; }
+  $('#key-msg').textContent = '열쇠 만드는 중…';
+  await idb.set('key', await cryptoBox.derive(p));
+  $('#pass').value = $('#pass2').value = ''; $('#key-msg').textContent = '';
+  state.hasKey = true; state.rekey = false;
+  toast('암호 문구를 정했어요');
+  await loadSnapshot(); render(); flush();
+};
+$('#btn-rekey').onclick = () => { state.rekey = true; $('#settings').close(); draw(); $('#pass').focus(); };
 $('#btn-disconnect').onclick = async () => {
   if (!confirm('Dropbox 연결을 끊을까요? 올리지 못한 기록은 폰에 남아 있다가 다시 연결하면 올라가요.')) return;
   await dbx.logout(); state.connected = false; $('#settings').close(); draw();
@@ -296,6 +342,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   const justLoggedIn = await dbx.finishLogin();
   state.connected = !!(await idb.get('auth'));
+  state.hasKey = !!(await idb.get('key'));
   // 개발 서버 전용 미리보기: localhost/?demo → 같은 폴더의 demo-snapshot.json으로 화면만 그린다 (공개 주소에서는 꺼짐)
   if (C.COACH_ROOT && new URLSearchParams(location.search).has('demo')) {
     state.snap = await (await fetch('demo-snapshot.json')).json();

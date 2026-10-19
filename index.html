@@ -28,6 +28,14 @@
     <button class="btn primary" id="btn-connect">Dropbox 연결</button>
   </section>
 
+  <section class="card" id="keycard" hidden>
+    <h2>🔐 암호 문구</h2>
+    <p class="muted small">기록은 이 문구로 잠가서 Dropbox에 올려요. PC(localhost:4730/coach-login)에도 <b>똑같이</b> 넣어 주세요. 문구는 저장하지 않으니 꼭 기억해 두세요.</p>
+    <input class="field" id="pass" type="password" placeholder="암호 문구 (8자 이상)" autocomplete="new-password">
+    <input class="field" id="pass2" type="password" placeholder="한 번 더" autocomplete="new-password">
+    <div class="row"><span class="muted small" id="key-msg"></span><button class="btn primary" id="btn-key">저장</button></div>
+  </section>
+
   <div class="band" id="reconnect" hidden>Dropbox 연결이 끊겼어요. 기록은 폰에 모아 둘게요. <button class="link" id="btn-reconnect">다시 연결</button></div>
 
   <section class="card" id="goals-card" hidden>
@@ -61,6 +69,7 @@
   <p class="muted small" id="settings-info"></p>
   <div class="row">
     <button class="btn" id="btn-disconnect">연결 끊기</button>
+    <button class="btn" id="btn-rekey">암호 문구 다시 입력</button>
     <button class="btn primary" id="btn-close">닫기</button>
   </div>
 </dialog>
