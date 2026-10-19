@@ -65,3 +65,4 @@ dialog { border: 1px solid var(--line); border-radius: var(--radius); padding: 1
 dialog::backdrop { background: rgba(0, 0, 0, .25); }
 .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: var(--ink); color: #fff; padding: 10px 16px; border-radius: 999px; font-size: 14px; opacity: 0; transition: .2s; pointer-events: none; max-width: calc(100vw - 32px); }
 .toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+#pc-sync { cursor: pointer; }

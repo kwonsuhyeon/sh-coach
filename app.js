@@ -97,7 +97,7 @@ const dbx = {
   async download(p) {
     const r = await this.call('https://content.dropboxapi.com/2/files/download', { 'Dropbox-API-Arg': JSON.stringify({ path: this.path(p) }) });
     if (r.status === 409) return null;   // 아직 없음 (PC가 한 번도 스냅샷을 안 씀)
-    if (!r.ok) throw new Error('net');
+    if (!r.ok) throw new Error(`HTTP ${r.status} ${(await r.text()).slice(0, 80)}`);
     return r.text();
   },
   // mode=add: 같은 이름이 있으면 실패 → 덮어쓰지 않는다. 이미 올라간 파일이면(409 conflict) 성공으로 본다.
@@ -162,8 +162,12 @@ async function loadSnapshot() {
   if (!navigator.onLine || !state.connected) return;
   try {
     const t = await dbx.download('/snapshot.json');
+    state.snapErr = t ? '' : '없음';
     if (t) { state.snap = JSON.parse(t); await idb.set('snapshot', state.snap); }
-  } catch (e) { if (e.message === 'revoked') state.revoked = true; }
+  } catch (e) {
+    if (e.message === 'revoked') state.revoked = true;
+    state.snapErr = e.message || String(e);   // 화면 아래에 보여 준다 (원인 찾기용)
+  }
 }
 
 // ============ 화면 ============
@@ -229,7 +233,9 @@ function draw() {
   }
 
   const s = state.snap;
-  $('#pc-sync').textContent = s ? `PC 동기화: ${ago(s.generated_at)}` : (state.connected ? 'PC가 아직 요약을 쓰지 않았어요' : '');
+  const err = state.snapErr && state.snapErr !== '없음' ? ` · 요약 받기 실패: ${state.snapErr}` : '';
+  $('#pc-sync').textContent = (s ? `PC 동기화: ${ago(s.generated_at)}` : (state.connected ? 'PC가 아직 요약을 쓰지 않았어요' : '')) + err +
+    (state.connected ? ' · 눌러서 다시 받기' : '');
   renderSync();
 }
 
@@ -260,6 +266,7 @@ $('#btn-settings').onclick = async () => {
   $('#settings').showModal();
 };
 $('#btn-close').onclick = () => $('#settings').close();
+$('#pc-sync').onclick = async () => { $('#pc-sync').textContent = '받는 중…'; await loadSnapshot(); render(); flush(); };
 $('#btn-disconnect').onclick = async () => {
   if (!confirm('Dropbox 연결을 끊을까요? 올리지 못한 기록은 폰에 남아 있다가 다시 연결하면 올라가요.')) return;
   await dbx.logout(); state.connected = false; $('#settings').close(); draw();
