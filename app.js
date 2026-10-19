@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v7';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v8';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -258,16 +258,22 @@ function tasksNow() {
   return [...map.values()];
 }
 const openTasks = () => tasksNow().filter(t => !['완료', '하지 않음'].includes(t.status));
-const templates = () => (state.snap && state.snap.templates && state.snap.templates.length ? state.snap.templates : FALLBACK_TEMPLATES);
+const baseTemplates = () => (state.snap && state.snap.templates && state.snap.templates.length ? state.snap.templates : FALLBACK_TEMPLATES);
+// 활동 첫 동작 사전(wiki/coach/activities.md) — 제목에 키워드가 있으면 일반 템플릿보다 먼저 쓴다
+const activities = () => (state.snap && state.snap.activities) || [];
+const actTemplates = () => activities().map(a => ({ id: 'a-' + a.id, version: a.version, name: a.name, keywords: a.keywords, steps: a.steps, small: a.small, obstacles: {}, act: true }));
+const templates = () => [...actTemplates(), ...baseTemplates()];
 const tplOf = id => templates().find(t => t.id === id) || templates().find(t => t.id === 'other') || templates()[0];
 function guessKind(title) {
-  for (const t of templates()) if ((t.keywords || []).some(k => k && title.includes(k))) return t.id;
+  const low = title.toLowerCase();
+  for (const t of templates()) if ((t.keywords || []).some(k => k && low.includes(String(k).toLowerCase()))) return t.id;
   return 'other';
 }
 // 템플릿 → 첫 행동 목록. 장애물을 고르면 그 줄을 맨 앞에, 폰만 있으면 PC 단계는 뒤로 ("💻 PC 켤 때")
 function buildSteps(kind, obstacle, device) {
   const t = tplOf(kind);
   let steps = t.steps.map(s => ({ text: s.text, min: s.min, pc: !!s.pc, done: false }));
+  if (t.act && t.small && obstacle === '피곤함') steps = [{ ...t.small, pc: !!t.small.pc, done: false }];   // 피곤하면 "작게"만
   const o = obstacle && t.obstacles && t.obstacles[obstacle];
   if (o) steps.unshift({ text: o.text, min: o.min, pc: false, done: false });
   if (device === 'phone') steps = [...steps.filter(s => !s.pc), ...steps.filter(s => s.pc)];
@@ -397,6 +403,23 @@ const REST_TABLE = {
   mid: { 5: ['창밖 보기', '스트레칭'], 10: ['음악 듣기', '산책'], 30: ['책 읽기', '걷기·가벼운 러닝'] },
   refresh: { 5: ['책 펼치기', '좋아하는 노래 한 곡'], 10: ['관심 개념 하나 찾아보기', '산책'], 30: ['흥미로운 논문 읽기', '가벼운 외출'] },
 };
+// 사전에서 쉼 고르기: 에너지가 맞고 시간 안에 드는 것 → 회복 응답·기록 횟수 순. 길면 "작게"로 줄여서
+const restScore = (a, time) => (a.recover ? a.recover['그렇다'] * 3 + a.recover['조금'] - a.recover['아니다'] : 0) + Math.log1p(a.count || 0) + ((a.min || 0) * 2 >= time ? 1 : 0);
+function restCands(energy, time) {
+  const acts = activities().filter(a => a.type === '쉼' && a.id !== 'phone' && (a.energy || []).includes(energy));
+  const by = (x, y) => restScore(y, time) - restScore(x, time);
+  const fit = acts.filter(a => (a.min || 0) <= time).sort(by).map(a => ({ a, steps: a.steps, short: false }));
+  const short = acts.filter(a => (a.min || 0) > time && a.small && (a.small.min || 0) <= time).sort(by).map(a => ({ a, steps: [a.small], short: true }));
+  // 시간 안에 드는 것 2 + 긴 쉼을 작게 줄인 것 2 (산책처럼 좋아하는 쉼이 짧은 시간에도 보이게), 모자라면 서로 채운다
+  const nShort = Math.min(short.length, Math.max(2, 4 - fit.length));
+  return [...fit.slice(0, 4 - nShort), ...short.slice(0, nShort)];
+}
+const actByText = text => { const t = tplOf(guessKind(text)); return t.act ? activities().find(a => 'a-' + a.id === t.id) : null; };
+function restPickBtn(c) {
+  const rc = c.a.recover && c.a.recover['그렇다'] ? ` · 회복됐던 쉼 ${c.a.recover['그렇다']}번` : '';
+  return `<button class="pick-btn" data-rest-act="${esc(c.a.id)}" data-short="${c.short ? 1 : ''}"><b>${esc(c.a.name)}${c.short ? ' · 작게' : ''}</b>
+    <span class="pick-sub">${esc(c.steps[0].text)}부터${c.short ? '' : c.a.min ? ` · ${c.a.min}분` : ''}${rc}</span></button>`;
+}
 function drawRest() {
   const r = state.rest;
   const now = ls.get('resting');
@@ -405,6 +428,7 @@ function drawRest() {
   if (now) {
     $('#rest-now').innerHTML = `<div class="muted small">${esc(now.hm)}부터</div><div class="resting-label">🌿 ${esc(now.label)}${now.min ? ` <span class="muted">${now.min}분</span>` : ''}</div>
       <p class="muted">쉬는 동안엔 다른 건 신경 쓰지 않아도 돼요.</p>
+      ${now.steps && now.steps.length ? `<ol class="rsteps">${now.steps.map((s, i) => `<li><button class="rstep ${s.done ? 'done' : ''}" data-rstep="${i}"><span class="ck">${s.done ? '✓' : ''}</span>${esc(s.text)}${s.min ? ` <small>${s.min}분</small>` : ''}</button></li>`).join('')}</ol>` : ''}
       ${now.ending ? `<h2 class="mt">회복됐나요?</h2><div class="chips">${['그렇다', '조금', '아니다'].map(f => `<button class="chip-btn" data-felt="${f}">${f}</button>`).join('')}</div>`
         : `<div class="row"><button class="btn" data-act="rest-close">그냥 닫기</button><button class="btn primary" data-act="rest-end">끝났어요</button></div>`}`;
     return;
@@ -415,11 +439,12 @@ function drawRest() {
   if (!r.energy || !r.time) { box.innerHTML = ''; return; }
   const day = state.snap && state.snap.days && state.snap.days[today()];
   const reserved = day && day.rest;
-  const items = REST_TABLE[r.energy][r.time];
-  box.innerHTML = `<h2 class="mt">이건 어때요?</h2><div class="pick">
+  const cands = restCands(r.energy, r.time);
+  const items = cands.length ? cands.map(restPickBtn) : REST_TABLE[r.energy][r.time].map(x => `<button class="pick-btn" data-label="${esc(x)}">${esc(x)}</button>`);
+  box.innerHTML = `<h2 class="mt">이건 어때요?</h2><p class="muted small">첫 동작 하나만 하면 시작이에요.</p><div class="pick">
     ${reserved ? `<button class="pick-btn reserved" data-label="${esc(reserved)}">📌 예약해 둔 쉼: ${esc(reserved)}</button>` : ''}
-    ${items.map(x => `<button class="pick-btn" data-label="${esc(x)}">${esc(x)}</button>`).join('')}
-    </div><button class="link mt" data-label="휴대폰으로 쉬기">📱 휴대폰으로 쉴래요</button>`;
+    ${items.join('')}
+    </div><button class="link mt" ${activities().some(a => a.id === 'phone') ? 'data-rest-act="phone"' : 'data-label="휴대폰으로 쉬기"'}>📱 휴대폰으로 쉴래요</button>`;
 }
 
 // ----- ▶ 시작하기 -----
@@ -430,11 +455,12 @@ function drawStart() {
   if (!f) {
     box.innerHTML = `<h2>무엇을 시작할까요?</h2>
       <div class="inline"><input class="field" id="flow-title" placeholder="예) 교수님께 메일, 논문 읽기" maxlength="120"><button class="btn primary" data-act="flow-new">나누기</button></div>
-      <p class="muted small">크게 적어도 괜찮아요. 1~5분짜리 첫 행동으로 나눠 드릴게요.</p>`;
+      <p class="muted small">크게 적어도 괜찮아요. 1~5분짜리 첫 행동으로 나눠 드릴게요.</p>
+      ${quickActs().length ? `<h2 class="mt">자주 하던 일</h2><div class="chips small-chips">${quickActs().map(a => `<button class="chip-btn" data-quick-act="${esc(a.id)}">${esc(a.name)}</button>`).join('')}</div>` : ''}`;
   } else {
     const tpl = tplOf(f.kind);
     box.innerHTML = `<div class="muted small">${f.isNew ? '새 할 일' : '이어서'}</div><h2>${esc(f.title)}</h2>
-      <div class="chips small-chips">${templates().map(t => `<button class="chip-btn ${t.id === f.kind ? 'on' : ''}" data-kind="${t.id}">${esc(t.name)}</button>`).join('')}</div>
+      <div class="chips small-chips">${[...(tpl.act ? [tpl] : []), ...baseTemplates()].map(t => `<button class="chip-btn ${t.id === f.kind ? 'on' : ''}" data-kind="${t.id}">${esc(t.name)}</button>`).join('')}</div>
       <p class="muted small mt">걸리는 게 있다면 (선택)</p>
       <div class="chips small-chips">${OBSTACLES.map(o => `<button class="chip-btn ${o === f.obstacle ? 'on' : ''}" data-obstacle="${o}">${o}</button>`).join('')}</div>
       <div class="chips small-chips mt"><button class="chip-btn ${f.device === 'phone' ? 'on' : ''}" data-device="phone">📱 폰만</button><button class="chip-btn ${f.device === 'pc' ? 'on' : ''}" data-device="pc">💻 PC 있음</button></div>
@@ -452,13 +478,15 @@ function drawStart() {
         <button class="btn" data-decide="hold">보류</button>
         <button class="btn" data-decide="drop">하지 않기</button>
       </div>`}
-      <div class="row"><span class="muted small">${esc(tpl.name)} 템플릿 v${tpl.version}${f.edited ? ' · 고침' : ''}</span><button class="link" data-act="flow-cancel">취소</button></div>`;
+      <div class="row"><span class="muted small">${esc(tpl.name)} ${tpl.act ? '첫 동작 사전' : '템플릿'} v${tpl.version}${f.edited ? ' · 고침' : ''}</span><button class="link" data-act="flow-cancel">취소</button></div>`;
   }
   const list = openTasks().filter(t => !state.flow || t.id !== state.flow.tid);
   $('#tasks-card').hidden = !list.length;
   $('#tasks').innerHTML = list.map(t => `<li><button class="task" data-open-task="${t.id}"><b>${esc(t.title)}</b>
     <span class="badge">${esc(t.status)}${t.when ? ' · ' + esc(t.when) : ''}</span></button></li>`).join('');
 }
+// 시작하기 빈 화면의 "자주 하던 일" — 사전의 일·생활 중 최근 기록이 많은 것
+const quickActs = () => activities().filter(a => a.type !== '쉼').sort((x, y) => (y.count || 0) - (x.count || 0)).slice(0, 6);
 function decideExtra(f) {
   if (f.choosing === 'later') {
     const slots = freeSlots();
@@ -558,15 +586,24 @@ $('#main').addEventListener('click', async e => {
   // 쉬기
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
   if (b.closest('#rest-time')) { state.rest.time = +d.v; drawRest(); return; }
-  if (d.label) {
-    await record('rest-choose', { label: d.label, min: state.rest.time || null });
-    ls.set('resting', { label: d.label, min: state.rest.time || null, hm: nowHM() });
+  if (d.restAct || d.label) {
+    let label = d.label, steps = [], act = '';
+    const a = d.restAct ? activities().find(x => x.id === d.restAct) : actByText(d.label);
+    if (a) { act = a.id; steps = d.short && a.small ? [a.small] : a.steps; if (!label) label = a.name + (d.short ? ' · 작게' : ''); }
+    await record('rest-choose', { label, min: state.rest.time || null, act });
+    ls.set('resting', { label, min: state.rest.time || null, hm: nowHM(), steps: steps.map(s => ({ text: s.text, min: s.min, done: false })) });
     state.rest = {}; drawRest(); return;
   }
+  if (d.rstep !== undefined) { const r = ls.get('resting'); if (r && r.steps && r.steps[+d.rstep]) { r.steps[+d.rstep].done = !r.steps[+d.rstep].done; ls.set('resting', r); drawRest(); } return; }
   if (d.act === 'rest-end') { ls.set('resting', { ...ls.get('resting'), ending: true }); drawRest(); return; }
   if (d.act === 'rest-close') { ls.set('resting', null); location.hash = ''; return; }
   if (d.felt) { const r = ls.get('resting'); await record('rest-done', { label: r.label, felt: d.felt }); ls.set('resting', null); toast('잘 쉬었어요'); location.hash = ''; return; }
   // 시작하기
+  if (d.quickAct) {
+    const a = activities().find(x => x.id === d.quickAct); if (!a) return;
+    state.flow = { isNew: true, tid: newTid(), title: a.name, kind: 'a-' + a.id, obstacle: '', device: 'phone', steps: buildSteps('a-' + a.id, '', 'phone'), edited: false };
+    drawStart(); return;
+  }
   if (d.act === 'flow-new') {
     const title = $('#flow-title').value.trim(); if (!title) return;
     const kind = guessKind(title);
@@ -689,6 +726,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
     const q = new URLSearchParams(location.search);
     if (q.get('flow')) { const k = guessKind(q.get('flow')); state.flow = { isNew: true, tid: 't_demoX', title: q.get('flow'), kind: k, obstacle: q.get('ob') || '', device: 'phone', steps: buildSteps(k, q.get('ob') || '', 'phone'), edited: false, choosing: q.get('choose') || null }; }
     if (q.get('rest')) { const [en, tm] = q.get('rest').split('-'); state.rest = { energy: en, time: +tm }; }
+    if (q.get('resting')) { const a = activities().find(x => x.id === q.get('resting')); if (a) ls.set('resting', { label: a.name, min: a.min, hm: '21:30', steps: a.steps.map((s, i) => ({ ...s, done: i < 2 })) }); }
     if (q.get('run')) state.run = { tid: q.get('run'), endAt: Date.now() + 5 * 60000 };
     draw(); return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
   }
