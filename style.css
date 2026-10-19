@@ -19,7 +19,7 @@ body {
   font-size: 16px; line-height: 1.5; -webkit-text-size-adjust: 100%;
   padding-bottom: env(safe-area-inset-bottom);
 }
-.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px var(--gutter) 8px; }
+.top { max-width: 640px; margin: 0 auto; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px var(--gutter) 8px; }
 .top h1 { font-size: 22px; margin: 2px 0 0; letter-spacing: -0.02em; }
 .date { color: var(--muted); font-size: 14px; }
 main { padding: 0 var(--gutter); max-width: 640px; margin: 0 auto; }
