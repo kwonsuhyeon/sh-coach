@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v13';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v14';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -125,10 +125,12 @@ const dbx = {
 };
 
 // ============ 이벤트 (폰 기록 1건 = Dropbox 파일 1개) ============
+// 한 번에 여러 건(add·steps·decide)을 남겨도 시각이 겹치지 않게 1ms씩 민다 — 같은 초 + 무작위 이름이면 PC가 순서를 뒤섞었다
+let lastTs = 0;
 async function record(type, payload = {}) {
-  const now = new Date();
+  const now = new Date(lastTs = Math.max(Date.now(), lastTs + 1));
   const id = randStr(9).replace(/[^A-Za-z0-9]/g, 'x');
-  const stamp = now.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');   // 20261019T121055Z — 이름순 = 시간순
+  const stamp = now.toISOString().replace(/[-:]/g, '').replace('.', '');   // 20261019T121055123Z — 이름순 = 시간순 (밀리초까지)
   const ev = { id, ts: now.getTime(), date: today(), hm: nowHM(), type, payload, file: `/events/${stamp}-${id.slice(0, 4)}.json`, sent: false };
   await idb.putEvent(ev);
   render();
