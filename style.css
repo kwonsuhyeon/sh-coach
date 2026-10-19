@@ -129,3 +129,18 @@ dialog .row { flex-wrap: wrap; }
 .rstep .ck { flex: none; width: 22px; height: 22px; border: 1.5px solid var(--line); border-radius: 6px; display: grid; place-items: center; font-size: 14px; color: #fff; }
 .rstep.done { color: var(--muted); text-decoration: line-through; }
 .rstep.done .ck { background: var(--blue); border-color: var(--blue); }
+
+/* ===== v10: 기록 탭 · 5초 시작 카운트다운 · 알람 ===== */
+.quick-tabs { margin-bottom: 8px; }
+.log .badge { flex: none; align-self: auto; }
+.count { font-size: 88px; font-weight: 800; color: var(--orange); text-align: center; line-height: 1.1; margin: 10px 0 0; font-variant-numeric: tabular-nums; }
+.center { text-align: center; }
+.praise { background: var(--orange-soft); color: var(--orange); font-weight: 700; font-size: 18px; text-align: center; border-radius: 12px; padding: 10px 12px; margin: 8px 0;
+  animation: praise-out 2.5s ease-in forwards; }
+@keyframes praise-out { 0%, 70% { opacity: 1; transform: scale(1); } 100% { opacity: 0; transform: scale(.96); } }
+.time-up { font-size: 18px; font-weight: 700; color: var(--orange); margin-top: 6px; }
+.checks { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; }
+.checks label { display: flex; align-items: center; gap: 6px; }
+.checks input { width: 20px; height: 20px; accent-color: var(--blue); }
+dialog h3 { margin: 14px 0 8px; }
+.timer.over { font-size: 20px; color: var(--orange); }

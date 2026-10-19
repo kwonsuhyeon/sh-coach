@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v9';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v10';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -225,6 +225,57 @@ const ls = {   // 이 폰에서만 쓰는 작은 편의값 (지워져도 괜찮�
   set(k, v) { try { localStorage.setItem('coach.' + k, JSON.stringify(v)); } catch {} },
 };
 const newTid = () => 't_' + randStr(6).replace(/[^A-Za-z0-9]/g, 'x');
+
+// ============ 알람 · 타이머 (PRD: tasks/prd-coach-log-tabs-timer-alarm.md) ============
+// 웹앱은 화면에 떠 있을 때만 울릴 수 있다 → 타이머가 도는 동안 Wake Lock으로 화면을 켜 둔다. 진동은 안드로이드만.
+const ALARM = { freq: 880, beepMs: 250, gapMs: 150, beeps: 3, rounds: 2, pauseMs: 1000, vibrate: [400, 200, 400, 200, 400] };
+const LAUNCH = { count: 5, delaySec: 10, nudgeAfter: 3 };   // 5초 시작 카운트다운 · 미루기 10초 · 3번째 미루기부터 "더 작게" 제안
+const LATE_MS = 5000;   // 앱 밖에 있다 돌아왔을 때 이만큼 지난 알람은 울리지 않고 끝난 화면만 보여 준다
+const PRAISE = {
+  quick: ['잘했어요! 시작이 제일 어려운 거예요', '바로 시작했네요 👏', '좋아요, 5분만 가요'],
+  late: ['미뤘다가도 시작했어요. 그게 진짜예요', '돌아왔네요, 잘했어요'],
+};
+const pick = list => list[Math.floor(Math.random() * list.length)];
+const fmt = ms => `${Math.floor(ms / 60000)}:${p2(Math.floor(ms / 1000) % 60)}`;
+const alarmOpt = () => ({ sound: ls.get('alarm.sound') !== false, vibe: ls.get('alarm.vibe') !== false });
+
+// AudioContext는 사용자가 누른 순간에 만들어야 소리가 난다 → #main 클릭마다 unlockAudio()
+let actx = null;
+function unlockAudio() {
+  try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch {}
+}
+// notes: [[주파수, 시작(초), 길이(초)], …]
+function chime(notes) {
+  if (!alarmOpt().sound) return;
+  unlockAudio(); if (!actx) return;
+  const t0 = actx.currentTime + 0.02;
+  for (const [freq, at, dur] of notes) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0 + at);
+    g.gain.exponentialRampToValueAtTime(0.3, t0 + at + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + at + dur);
+    o.connect(g).connect(actx.destination); o.start(t0 + at); o.stop(t0 + at + dur + 0.02);
+  }
+}
+function buzz(pattern) { if (alarmOpt().vibe && navigator.vibrate) navigator.vibrate(pattern); }
+function alarm() {
+  const step = (ALARM.beepMs + ALARM.gapMs) / 1000, round = ALARM.beeps * step + ALARM.pauseMs / 1000, notes = [];
+  for (let r = 0; r < ALARM.rounds; r++) for (let b = 0; b < ALARM.beeps; b++) notes.push([ALARM.freq, r * round + b * step, ALARM.beepMs / 1000]);
+  chime(notes); buzz(ALARM.vibrate);
+}
+const countFx = () => { chime([[660, 0, 0.05]]); buzz(60); };              // 카운트다운 숫자가 줄 때
+const rewardFx = () => { chime([[660, 0, 0.15], [990, 0.15, 0.2]]); buzz([80, 60, 80]); };   // 시작 보상 (상승 두 음)
+
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && 'wakeLock' in navigator && !document.hidden) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });   // 화면을 벗어나면 브라우저가 푼다 → 돌아오면 clock()이 다시 요청
+    } else if (!on && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+  } catch { wakeLock = null; }
+}
 const addDaysStr = (date, n) => { const d = new Date(date + 'T12:00:00'); d.setDate(d.getDate() + n); return ymd(d); };
 
 // PC가 아직 반영하지 않은 내 기록 (스냅샷 위에 덧씌운다)
@@ -318,9 +369,26 @@ async function renderSync() {
 }
 
 // 오늘 목표 = 스냅샷 목표 + 폰에서 바꾼 체크 상태 (PC가 아직 병합하지 않았어도 내가 누른 대로 보이게)
+// ⚡ 기록 탭 — 고른 탭의 접두어를 줄 앞에 붙여 quick 이벤트로 보낸다 (PC applyQuick이 접두어로 섹션을 고른다)
+const QUICK_TABS = {
+  한: { label: '한 일', ph: '연구 30', hint: '활동 이름과 분 (분은 빼도 돼요)' },
+  밥: { label: '밥', ph: '점심 김치찌개', hint: '끼니와 메뉴' },
+  몸: { label: '몸', ph: '체력2 기분3', hint: '체력·기분 1~5 · 몸무게68.5 · 물5 · 걸음8000' },
+  목표: { label: '목표', ph: '산책 20분', hint: '🎯 오늘 목표에 바로 추가돼요' },
+};
+const QUICK_RE = /^(한|밥|몸|목표|메모)\s*[:：]?\s+(.+)$/;   // server.js applyQuick과 같은 규칙
+const quickTab = () => (ls.get('quickTab') in QUICK_TABS ? ls.get('quickTab') : '한');
+function quickLines(text) {
+  return String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+    .map(l => { const m = l.match(QUICK_RE); return m ? { kind: m[1], text: m[2].trim() } : { kind: '메모', text: l }; });
+}
+
+// 목표 탭으로 남긴 목표(quick의 "목표 …" 줄)도 PC 병합 전에 바로 보이게 덧붙인다
 function goalsFor(date) {
   const day = state.snap && state.snap.days && state.snap.days[date];
   const goals = (day ? day.goals : []).map(g => ({ ...g }));
+  for (const e of pendingEvents(['quick']).filter(e => e.date === date))
+    for (const l of quickLines(e.payload.text)) if (l.kind === '목표' && !goals.some(g => g.text === l.text)) goals.push({ text: l.text, done: false });
   for (const e of pendingEvents(['goal-set']).filter(e => e.date === date)) {
     const g = goals.find(x => x.text === e.payload.text);
     if (g) g.done = !!e.payload.done;
@@ -374,7 +442,8 @@ function drawHome() {
 }
 
 // 돌아보기 카드 (처음 화면·실행 화면 공용) — 1~2번 터치. "나중에"는 한 번으로 닫히고 다시 묻지 않는다
-function reviewUI(box, t, question, done) {
+// extra: 회고에 같이 실을 값 (실행 화면은 미룬 횟수 delays)
+function reviewUI(box, t, question, done, extra = {}) {
   const st = box._rv && box._rv.tid === t.id ? box._rv : (box._rv = { tid: t.id, result: '', obstacle: '' });
   box.innerHTML = `<h2>${esc(question)}</h2>
     <div class="chips">${['완료', '일부', '못함', '의도적으로 안 함'].map(r => `<button class="chip-btn ${st.result === r ? 'on' : ''}" data-r="${r}">${r}</button>`).join('')}</div>
@@ -384,12 +453,12 @@ function reviewUI(box, t, question, done) {
     <div class="row"><button class="btn" data-later>나중에</button><button class="btn primary" data-save ${st.result ? '' : 'disabled'}>남기기</button></div>`;
   box.onclick = async e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.r) { st.result = b.dataset.r; reviewUI(box, t, question, done); return; }
-    if (b.dataset.o) { st.obstacle = st.obstacle === b.dataset.o ? '' : b.dataset.o; const note = box.querySelector('[data-note]'); st.note = note ? note.value : ''; reviewUI(box, t, question, done); if (st.note) box.querySelector('[data-note]').value = st.note; return; }
+    if (b.dataset.r) { st.result = b.dataset.r; reviewUI(box, t, question, done, extra); return; }
+    if (b.dataset.o) { st.obstacle = st.obstacle === b.dataset.o ? '' : b.dataset.o; const note = box.querySelector('[data-note]'); st.note = note ? note.value : ''; reviewUI(box, t, question, done, extra); if (st.note) box.querySelector('[data-note]').value = st.note; return; }
     if (b.hasAttribute('data-later')) { ls.set('dismiss.' + t.id + '.' + t.decidedTs, 1); box._rv = null; done(); return; }
     if (b.hasAttribute('data-save')) {
       const note = box.querySelector('[data-note]');
-      await record('task-review', { tid: t.id, result: st.result, obstacle: st.obstacle, note: note ? note.value.trim() : '' });
+      await record('task-review', { tid: t.id, result: st.result, obstacle: st.obstacle, note: note ? note.value.trim() : '', ...extra });
       box._rv = null;
       toast(st.result === '완료' ? '잘했어요 ✓' : '남겼어요. 다음 방식에 반영할게요');
       done();
@@ -425,11 +494,16 @@ function drawRest() {
   const now = ls.get('resting');
   $('#rest-pick').hidden = !!now;
   $('#rest-now').hidden = !now;
+  if (now && now.back) { $('#rest-now').innerHTML = backToWork(); return; }
   if (now) {
+    const counting = now.endAt && !now.ending;
     $('#rest-now').innerHTML = `<div class="muted small">${esc(now.hm)}부터</div><div class="resting-label">🌿 ${esc(now.label)}${now.min ? ` <span class="muted">${now.min}분</span>` : ''}</div>
-      <p class="muted">쉬는 동안엔 다른 건 신경 쓰지 않아도 돼요.</p>
+      ${counting ? `<div class="timer" id="rest-timer">${fmt(Math.max(0, now.endAt - Date.now()))}</div><p class="muted small">타이머 동안 화면을 켜 둘게요</p>`
+        : now.ending ? '' : '<p class="muted">쉬는 동안엔 다른 건 신경 쓰지 않아도 돼요.</p>'}
       ${now.steps && now.steps.length ? `<ol class="rsteps">${now.steps.map((s, i) => `<li><button class="rstep ${s.done ? 'done' : ''}" data-rstep="${i}"><span class="ck">${s.done ? '✓' : ''}</span>${esc(s.text)}${s.min ? ` <small>${s.min}분</small>` : ''}</button></li>`).join('')}</ol>` : ''}
-      ${now.ending ? `<h2 class="mt">회복됐나요?</h2><div class="chips">${['그렇다', '조금', '아니다'].map(f => `<button class="chip-btn" data-felt="${f}">${f}</button>`).join('')}</div>`
+      ${now.ending ? `${now.timeUp ? `<div class="time-up">⏰ ${now.min}분 다 쉬었어요</div>` : ''}<h2 class="mt">회복됐나요?</h2>
+        <div class="chips">${['그렇다', '조금', '아니다'].map(f => `<button class="chip-btn" data-felt="${f}">${f}</button>`).join('')}</div>
+        ${now.timeUp ? '<button class="link mt" data-act="rest-more">🌿 5분 더 쉬기</button>' : ''}`
         : `<div class="row"><button class="btn" data-act="rest-close">그냥 닫기</button><button class="btn primary" data-act="rest-end">끝났어요</button></div>`}`;
     return;
   }
@@ -445,6 +519,19 @@ function drawRest() {
     ${reserved ? `<button class="pick-btn reserved" data-label="${esc(reserved)}">📌 예약해 둔 쉼: ${esc(reserved)}</button>` : ''}
     ${items.join('')}
     </div><button class="link mt" ${activities().some(a => a.id === 'phone') ? 'data-rest-act="phone"' : 'data-label="휴대폰으로 쉬기"'}>📱 휴대폰으로 쉴래요</button>`;
+}
+
+// 쉼 → 일 전환: 쉼은 끝내기가 어렵다. "회복됐나요?"에 답하면 이어서 할 일의 첫 동작을 5초 카운트다운으로 바로 잇는다
+const BACK_MS = 30 * 60000;   // 이 시간이 지나면 전환 카드를 접고 다시 쉼 고르기 화면으로
+function backToWork() {
+  const nx = dueTasks()[0];
+  const step = nx && nx.steps.find(s => !s.done);
+  return `<h2>잘 쉬었어요 🌿</h2>
+    <p class="muted">쉼에서 일로 넘어가는 게 제일 어려워요. 첫 동작 하나만 해 볼까요?</p>
+    ${nx ? `<div class="next-title">${esc(nx.title)}</div>
+      ${step ? `<div class="next-step">${step.pc ? '💻 ' : ''}${esc(step.text)}${step.min ? ` <span class="muted">(${step.min}분)</span>` : ''}</div>` : ''}
+      <div class="row"><button class="btn" data-act="back-home">나중에</button><button class="btn primary" data-act="run" data-tid="${nx.id}">▶ 5초 뒤 시작</button></div>`
+    : `<div class="row"><button class="btn" data-act="back-home">처음으로</button><a class="btn primary" href="#start" data-act="back-start">▶ 시작하기</a></div>`}`;
 }
 
 // ----- ▶ 시작하기 -----
@@ -510,7 +597,7 @@ async function decide(decision, when = '') {
   await record('task-steps', { tid: f.tid, steps: f.steps, template: tpl.id, version: tpl.version, kind: f.kind, edited: !!f.edited });
   await record('task-decide', { tid: f.tid, decision, when });
   state.flow = null;
-  if (decision === 'now') { state.run = { tid: f.tid, endAt: Date.now() + 5 * 60000 }; location.hash = '#run'; return; }
+  if (decision === 'now') { startCount(f.tid); location.hash = '#run'; return; }
   toast({ later: '오늘 나중에 다시 보여 드릴게요', date: `${when}에 다시 보여 드릴게요`, hold: '보류함에 넣어 뒀어요', drop: '하지 않기로 정했어요. 그것도 결정이에요' }[decision]);
   location.hash = '';
 }
@@ -530,37 +617,94 @@ function drawReading() {
 }
 
 // ----- 실행 (지금 5분) -----
-let runTimer = null;
+// run = { tid, phase: 'count'(5초 시작 카운트다운) | 'run'(5분), countAt, endAt, delays(이 단계에서 미룬 횟수), delaysTotal, rang, startedAt, praise, reviewing }
+const getRun = () => state.run || ls.get('run');
+const saveRun = r => { state.run = r; ls.set('run', r); };
+const runMs = () => (state.demoSec || 5 * 60) * 1000;   // 데모 &sec=N 이면 N초
+const phaseOf = r => r.phase || 'run';                  // v9에서 남은 실행 상태는 바로 5분 단계
+function startCount(tid, prev = {}) {
+  unlockAudio();
+  saveRun({ tid, phase: 'count', countAt: Date.now() + LAUNCH.count * 1000, delays: 0, delaysTotal: prev.delaysTotal || 0 });
+}
+function startRun(r) {
+  const now = Date.now();
+  saveRun({ ...r, phase: 'run', endAt: now + runMs(), rang: false, startedAt: now, praise: pick(r.delays ? PRAISE.late : PRAISE.quick) });
+  rewardFx();
+}
 function drawRun() {
-  clearInterval(runTimer);
-  const run = state.run || ls.get('run');
+  const run = getRun();
   const t = run && tasksNow().find(x => x.id === run.tid);
   const box = $('#run');
   if (!t) { box.innerHTML = '<p class="muted">진행 중인 일이 없어요.</p><a class="btn" href="#">처음으로</a>'; return; }
-  state.run = run; ls.set('run', run);
+  saveRun(run);
   const i = t.steps.findIndex(s => !s.done);
   if (run.reviewing || i < 0) {
-    reviewUI(box, t, i < 0 ? `‘${t.title}’ 단계를 다 했어요! 어땠어요?` : `‘${t.title}’ 여기까지 어땠어요?`, () => { state.run = null; ls.set('run', null); location.hash = ''; });
+    reviewUI(box, t, i < 0 ? `‘${t.title}’ 단계를 다 했어요! 어땠어요?` : `‘${t.title}’ 여기까지 어땠어요?`,
+      () => { saveRun(null); location.hash = ''; }, { delays: run.delaysTotal || 0 });
     return;
   }
   const s = t.steps[i];
-  box.innerHTML = `<div class="muted small">${esc(t.title)} · ${i + 1}/${t.steps.length}단계</div>
-    <div class="run-step">${s.pc ? '💻 ' : ''}${esc(s.text)}</div>
-    <div class="timer" id="timer"></div>
+  const head = `<div class="muted small">${esc(t.title)} · ${i + 1}/${t.steps.length}단계</div>
+    <div class="run-step">${s.pc ? '💻 ' : ''}${esc(s.text)}</div>`;
+  if (phaseOf(run) === 'count') {
+    box.innerHTML = `${head}
+      <div class="count" id="count">${Math.max(1, Math.ceil((run.countAt - Date.now()) / 1000))}</div>
+      <p class="muted small center">0이 되면 시작이에요</p>
+      <div class="row"><button class="btn" data-act="count-delay">⏳ ${LAUNCH.delaySec}초 미루기</button><button class="btn primary" data-act="count-go">지금 바로</button></div>
+      ${run.delays >= LAUNCH.nudgeAfter - 1 ? `<button class="link mt" data-act="redo" data-tid="${t.id}">첫 동작을 더 작게 바꿔 볼까요?</button>` : ''}`;
+    return;
+  }
+  const left = run.endAt - Date.now();
+  const since = Date.now() - (run.startedAt || 0);
+  box.innerHTML = `${head}
+    ${run.praise && since < 2500 ? `<div class="praise" style="animation-delay:-${since}ms">${esc(run.praise)}</div>` : ''}
+    <div class="timer${left > 0 ? "" : " over"}" id="timer">${left > 0 ? fmt(left) : `${Math.round(runMs() / 60000) || 5}분 지났어요. <button class="link" data-act="run-more">5분 더</button>`}</div>
+    ${left > 0 ? '<p class="muted small">타이머 동안 화면을 켜 둘게요</p>' : ''}
     <div class="row"><button class="btn" data-act="run-stop">여기까지</button><button class="btn primary" data-act="step-done" data-i="${i}">✓ 이 단계 끝</button></div>`;
-  const tick = () => {
-    const left = Math.max(0, run.endAt - Date.now());
-    const el = $('#timer'); if (!el) return;
-    if (left > 0) el.textContent = `${Math.floor(left / 60000)}:${p2(Math.floor(left / 1000) % 60)}`;
-    else { clearInterval(runTimer); el.innerHTML = `5분 지났어요. <button class="link" data-act="run-more">5분 더</button>`; }   // 소리 없이
-  };
-  tick(); runTimer = setInterval(tick, 1000);
+}
+
+// 1초보다 잘게 도는 시계 하나가 두 타이머(실행·쉼)를 함께 돌린다 — 어느 화면에 있든 끝나면 울린다
+function clock() {
+  const now = Date.now();
+  let active = false;
+  const redraw = v => { if (view() === v) (v === 'run' ? drawRun : drawRest)(); };
+  const run = getRun();
+  const t = run && !run.reviewing && tasksNow().find(x => x.id === run.tid);
+  if (t && t.steps.some(s => !s.done)) {
+    if (phaseOf(run) === 'count') {
+      active = true;
+      if (now >= run.countAt) {
+        if (now - run.countAt > LATE_MS) saveRun({ ...run, countAt: now + LAUNCH.count * 1000 });   // 카운트 중에 앱을 떠났다 왔으면 다시 센다
+        else startRun(run);
+        redraw('run');
+      } else {
+        const el = $('#count'), n = String(Math.ceil((run.countAt - now) / 1000));
+        if (el && el.textContent !== n) { el.textContent = n; countFx(); }
+      }
+    } else if (run.endAt) {
+      if (now < run.endAt) { active = true; const el = $('#timer'); if (el) el.textContent = fmt(run.endAt - now); }
+      else if (!run.rang) { saveRun({ ...run, rang: true }); if (now - run.endAt <= LATE_MS) alarm(); redraw('run'); }
+    }
+  }
+  const r = ls.get('resting');
+  if (r && r.back && now - (r.backAt || 0) > BACK_MS) { ls.set('resting', null); redraw('rest'); }
+  else if (r && r.endAt && !r.ending) {
+    if (now < r.endAt) { active = true; const el = $('#rest-timer'); if (el) el.textContent = fmt(r.endAt - now); }
+    else { ls.set('resting', { ...r, ending: true, timeUp: true, endedAt: r.endAt }); if (now - r.endAt <= LATE_MS) alarm(); redraw('rest'); }
+  }
+  keepAwake(active);
 }
 
 // ----- 🧺 정리하기 -----
 function drawLog() {
   $('#joy-list').innerHTML = todays('joy').map(e => `<li><span>${esc(e.hm)}</span><b>✨ ${esc(e.payload.text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`).join('');
-  $('#log').innerHTML = todays('quick').map(e => `<li><span>${esc(e.hm)}</span><b>${esc(e.payload.text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`).join('');
+  const tab = quickTab();
+  $('#quick-tabs').innerHTML = Object.entries(QUICK_TABS).map(([k, v]) =>
+    `<button class="chip-btn ${k === tab ? 'on' : ''}" role="tab" aria-selected="${k === tab}" data-qtab="${k}">${v.label}</button>`).join('');
+  $('#quick').placeholder = '예) ' + QUICK_TABS[tab].ph;
+  $('#quick-hint').textContent = QUICK_TABS[tab].hint;
+  $('#log').innerHTML = todays('quick').flatMap(e => quickLines(e.payload.text).map(l => `<li><span>${esc(e.hm)}</span>
+    <span class="badge">${esc(l.kind === '한' ? '한 일' : l.kind)}</span><b>${esc(l.text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`)).join('');
   const goals = goalsFor(today());
   $('#goals-card').hidden = !goals.length;
   $('#goals').innerHTML = goals.map((g, i) => `<li class="${g.done ? 'done' : ''} ${g.depth ? 'sub' : ''}">
@@ -583,8 +727,12 @@ window.addEventListener('hashchange', () => { window.scrollTo(0, 0); draw(); });
 $('#main').addEventListener('click', async e => {
   const b = e.target.closest('button, a'); if (!b) return;
   const d = b.dataset;
-  // 처음
-  if (d.act === 'run') { state.run = { tid: d.tid, endAt: Date.now() + 5 * 60000 }; ls.set('run', state.run); location.hash = '#run'; return; }
+  unlockAudio();   // 누른 순간에만 소리를 열 수 있다 — 나중에 타이머 끝 알람이 이걸 쓴다
+  // 처음 (쉼 → 일 전환 카드에서도 같은 버튼)
+  if (d.act === 'run') { if ((ls.get('resting') || {}).back) ls.set('resting', null); startCount(d.tid); location.hash = '#run'; return; }
+  if (d.act === 'back-home') { ls.set('resting', null); location.hash = ''; return; }
+  if (d.act === 'back-start') { ls.set('resting', null); return; }   // 링크는 그대로 #start로
+  if (d.qtab) { ls.set('quickTab', d.qtab); drawLog(); $('#quick').focus(); return; }
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
   // 쉬기
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
@@ -593,14 +741,22 @@ $('#main').addEventListener('click', async e => {
     let label = d.label, steps = [], act = '';
     const a = d.restAct ? activities().find(x => x.id === d.restAct) : actByText(d.label);
     if (a) { act = a.id; steps = d.short && a.small ? [a.small] : a.steps; if (!label) label = a.name + (d.short ? ' · 작게' : ''); }
-    await record('rest-choose', { label, min: state.rest.time || null, act });
-    ls.set('resting', { label, min: state.rest.time || null, hm: nowHM(), steps: steps.map(s => ({ text: s.text, min: s.min, done: false })) });
+    const min = state.rest.time || null, startAt = Date.now();
+    await record('rest-choose', { label, min, act });
+    // 고른 시간으로 카운트다운 바로 시작 (clock()이 돌리고 끝나면 울린다)
+    ls.set('resting', { label, min, hm: nowHM(), steps: steps.map(s => ({ text: s.text, min: s.min, done: false })), startAt, endAt: min ? startAt + min * 60000 : null });
     state.rest = {}; drawRest(); return;
   }
   if (d.rstep !== undefined) { const r = ls.get('resting'); if (r && r.steps && r.steps[+d.rstep]) { r.steps[+d.rstep].done = !r.steps[+d.rstep].done; ls.set('resting', r); drawRest(); } return; }
-  if (d.act === 'rest-end') { ls.set('resting', { ...ls.get('resting'), ending: true }); drawRest(); return; }
+  if (d.act === 'rest-end') { ls.set('resting', { ...ls.get('resting'), ending: true, endedAt: Date.now() }); drawRest(); return; }
+  if (d.act === 'rest-more') { const r = ls.get('resting'); ls.set('resting', { ...r, ending: false, timeUp: false, endedAt: null, endAt: Date.now() + 5 * 60000, min: (r.min || 0) + 5 }); drawRest(); return; }
   if (d.act === 'rest-close') { ls.set('resting', null); location.hash = ''; return; }
-  if (d.felt) { const r = ls.get('resting'); await record('rest-done', { label: r.label, felt: d.felt }); ls.set('resting', null); toast('잘 쉬었어요'); location.hash = ''; return; }
+  if (d.felt) {
+    const r = ls.get('resting');
+    const actual = r.startAt ? Math.max(1, Math.round(((r.endedAt || Date.now()) - r.startAt) / 60000)) : null;
+    await record('rest-done', { label: r.label, felt: d.felt, ...(actual ? { actual } : {}) });
+    ls.set('resting', { back: true, backAt: Date.now() }); drawRest(); return;   // 쉼 → 일 전환 카드
+  }
   // 시작하기
   if (d.quickAct) {
     const a = activities().find(x => x.id === d.quickAct); if (!a) return;
@@ -638,9 +794,19 @@ $('#main').addEventListener('click', async e => {
   }
   if (d.openTask) { const t = tasksNow().find(x => x.id === d.openTask); if (t) { openFlow(t); drawStart(); window.scrollTo(0, 0); } return; }
   // 실행
-  if (d.act === 'step-done') { await record('task-step', { tid: state.run.tid, i: +d.i, done: true }); return; }   // record → render → 다음 단계
-  if (d.act === 'run-stop') { state.run.reviewing = true; ls.set('run', state.run); drawRun(); return; }
-  if (d.act === 'run-more') { state.run.endAt = Date.now() + 5 * 60000; ls.set('run', state.run); drawRun(); return; }
+  if (d.act === 'count-go') { startRun(getRun()); drawRun(); return; }
+  if (d.act === 'count-delay') {
+    const r = getRun();
+    saveRun({ ...r, countAt: Date.now() + LAUNCH.delaySec * 1000, delays: (r.delays || 0) + 1, delaysTotal: (r.delaysTotal || 0) + 1 });
+    drawRun(); return;
+  }
+  if (d.act === 'step-done') {
+    // 한 단계 끝 → 짧은 보상, 다음 단계도 5초 카운트다운부터 (마지막 단계면 drawRun이 회고로 넘어간다)
+    startCount(state.run.tid, state.run); toast('✓ 한 단계 끝!'); buzz(80);
+    await record('task-step', { tid: state.run.tid, i: +d.i, done: true }); return;   // record → render → 다음 단계
+  }
+  if (d.act === 'run-stop') { saveRun({ ...getRun(), reviewing: true }); drawRun(); return; }
+  if (d.act === 'run-more') { saveRun({ ...getRun(), endAt: Date.now() + 5 * 60000, rang: false, praise: null }); drawRun(); return; }
   // 정리하기 — 머릿속 비우기 후 하나씩 고르기
   if (d.dump) {
     const t = tasksNow().find(x => x.id === d.tid); if (!t) return;
@@ -670,8 +836,11 @@ $('#btn-joy').onclick = async () => {
   await record('joy', { text }); $('#joy').value = ''; toast('✨ 남겼어요');
 };
 $('#btn-quick').onclick = async () => {
-  const text = $('#quick').value.trim(); if (!text) return;
-  await record('quick', { text }); $('#quick').value = ''; toast('남겼어요');
+  const tab = quickTab();
+  const lines = $('#quick').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+    .map(l => (QUICK_RE.test(l) ? l : `${tab} ${l}`));   // 직접 접두어를 쓴 줄(메모 … 등)은 그대로
+  if (!lines.length) return;
+  await record('quick', { text: lines.join('\n') }); $('#quick').value = ''; toast('남겼어요');
 };
 $('#btn-dump').onclick = async () => {
   const lines = $('#dump').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(0, 15);
@@ -694,8 +863,12 @@ $('#btn-settings').onclick = async () => {
   const ev = await idb.events();
   $('#settings-info').textContent = `${state.connected ? 'Dropbox 연결됨' : '연결 안 됨'} · ${state.hasKey ? '🔐 암호화 켜짐' : '암호 문구 없음'} · 폰에 있는 기록 ${ev.length}건 (올리지 못한 것 ${ev.filter(e => !e.sent).length}건)` +
     (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '') + ` · 앱 ${APP_VERSION}` + (state.snapErr ? ` · 요약: ${state.snapErr}` : '');
+  $('#opt-sound').checked = alarmOpt().sound; $('#opt-vibe').checked = alarmOpt().vibe;
   $('#settings').showModal();
 };
+$('#opt-sound').onchange = e => ls.set('alarm.sound', e.target.checked);
+$('#opt-vibe').onchange = e => ls.set('alarm.vibe', e.target.checked);
+$('#btn-alarm-test').onclick = () => { unlockAudio(); alarm(); };
 $('#btn-close').onclick = () => $('#settings').close();
 $('#pc-sync').onclick = async () => { $('#pc-sync').textContent = '받는 중…'; await loadSnapshot(); render(); flush(); };
 $('#btn-key').onclick = async () => {
@@ -722,6 +895,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
 (async () => {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   state.rest = {};
+  setInterval(clock, 250);
   // 개발 서버 전용 미리보기: localhost/?demo → 같은 폴더의 demo-snapshot.json으로 화면만 그린다 (공개 주소에서는 꺼짐)
   if (C.COACH_ROOT && new URLSearchParams(location.search).has('demo')) {
     state.snap = await (await fetch('demo-snapshot.json')).json();
@@ -730,8 +904,21 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
     const q = new URLSearchParams(location.search);
     if (q.get('flow')) { const k = guessKind(q.get('flow')); state.flow = { isNew: true, tid: 't_demoX', title: q.get('flow'), kind: k, obstacle: q.get('ob') || '', device: 'phone', steps: buildSteps(k, q.get('ob') || '', 'phone'), edited: false, choosing: q.get('choose') || null }; }
     if (q.get('rest')) { const [en, tm] = q.get('rest').split('-'); state.rest = { energy: en, time: +tm }; }
-    if (q.get('resting')) { const a = activities().find(x => x.id === q.get('resting')); if (a) ls.set('resting', { label: a.name, min: a.min, hm: '21:30', steps: a.steps.map((s, i) => ({ ...s, done: i < 2 })) }); }
-    if (q.get('run')) state.run = { tid: q.get('run'), endAt: Date.now() + 5 * 60000 };
+    // 타이머 확인용: &sec=N (실행·쉼 타이머를 N초로) · &phase=run (카운트다운 건너뜀) · &delays=N · &end=1 (쉼 시간 다 됨) · &back=1 (쉼 → 일 전환 카드)
+    state.demoSec = +q.get('sec') || 0;
+    const now = Date.now();
+    ls.set('resting', null); ls.set('run', null);
+    if (q.get('resting')) {
+      const a = activities().find(x => x.id === q.get('resting'));
+      if (a) ls.set('resting', { label: a.name, min: a.min, hm: '21:30', steps: a.steps.map((s, i) => ({ ...s, done: i < 2 })), startAt: now,
+        endAt: now + (state.demoSec ? state.demoSec * 1000 : a.min * 60000), ...(q.get('end') ? { ending: true, timeUp: true, endedAt: now } : {}) });
+    }
+    if (q.get('back')) ls.set('resting', { back: true, backAt: now });
+    if (q.get('run')) {
+      const delays = +q.get('delays') || 0;
+      state.run = q.get('phase') === 'run' ? { tid: q.get('run'), phase: 'run', endAt: now + runMs(), startedAt: now, praise: PRAISE.quick[0], delays, delaysTotal: delays }
+        : { tid: q.get('run'), phase: 'count', countAt: now + LAUNCH.count * 1000, delays, delaysTotal: delays };
+    }
     draw(); return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
   }
   const justLoggedIn = await dbx.finishLogin();

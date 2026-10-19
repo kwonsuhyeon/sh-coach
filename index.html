@@ -95,10 +95,11 @@
     </section>
 
     <section class="card" id="quick-card">
-      <h2>⚡ 한 줄 기록</h2>
-      <textarea id="quick" rows="3" placeholder="예) 한 연구 30&#10;밥 점심 김치찌개&#10;몸 체력2 기분3 (그냥 쓰면 메모)"></textarea>
+      <h2>⚡ 기록</h2>
+      <div class="chips quick-tabs" id="quick-tabs" role="tablist" aria-label="기록 종류"></div>
+      <textarea id="quick" rows="2"></textarea>
       <div class="row">
-        <span class="muted small">접두어: 한 · 밥 · 몸 · 목표</span>
+        <span class="muted small" id="quick-hint"></span>
         <button class="btn primary" id="btn-quick">남기기</button>
       </div>
       <ul class="log" id="log"></ul>
@@ -127,6 +128,13 @@
 <dialog id="settings">
   <h2>설정</h2>
   <p class="muted small" id="settings-info"></p>
+  <h3 class="small">타이머 끝 알람</h3>
+  <div class="checks">
+    <label><input type="checkbox" id="opt-sound"> 소리</label>
+    <label><input type="checkbox" id="opt-vibe"> 진동</label>
+    <button class="btn" id="btn-alarm-test">🔔 알람 시험</button>
+  </div>
+  <p class="muted small">앱이 화면에 떠 있을 때만 울려요. 타이머 동안은 화면을 켜 둬요.</p>
   <div class="row">
     <button class="btn" id="btn-disconnect">연결 끊기</button>
     <button class="btn" id="btn-rekey">암호 문구 다시 입력</button>
