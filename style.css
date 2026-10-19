@@ -152,3 +152,12 @@ dialog h3 { margin: 14px 0 8px; }
 .chip-btn.num { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; }
 .body-in { width: 110px; flex: none; margin: 0; }
 .water { min-width: 44px; text-align: center; font-size: 17px; }
+
+/* ===== v12: 완료 버튼 · 📚 논문 메뉴 ===== */
+:root { --ok-soft: #e8f5ee; --paper-soft: #f1edfb; }
+.btn.done, .chip-btn.done-chip { background: var(--ok-soft); border-color: var(--ok-soft); color: var(--ok); font-weight: 600; }
+.task-li { display: flex; align-items: center; gap: 8px; }
+.task-li .task { flex: 1; min-width: 0; }
+.done-chip { flex: none; font-size: 13px; padding: 6px 10px; }
+.menu-btn.m-paper .emo { background: var(--paper-soft); }
+.decide .btn.done { grid-column: auto; }

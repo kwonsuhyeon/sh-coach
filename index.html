@@ -46,6 +46,7 @@
     <nav class="menu">
       <a class="menu-btn m-rest" href="#rest"><span class="emo">🌿</span><b>쉬기</b><small>지금 상태에 맞는 쉼</small></a>
       <a class="menu-btn m-start" href="#start"><span class="emo">▶</span><b>시작하기</b><small>할 일을 첫 행동으로</small></a>
+      <a class="menu-btn m-paper" href="#paper"><span class="emo">📚</span><b>논문</b><small id="menu-paper-sub">오늘 읽을 논문</small></a>
       <a class="menu-btn m-log" href="#log"><span class="emo">🧺</span><b>정리하기</b><small>기록 · 작은 즐거움 · 목표</small></a>
     </nav>
     <p class="joy-line" id="joy-line"></p>
@@ -69,14 +70,17 @@
 
   <!-- ===== ▶ 시작하기 ===== -->
   <div class="view" id="v-start" hidden>
-    <section class="card" id="reading-card" hidden>
-      <h2>📚 오늘의 논문</h2>
-      <div id="reading"></div>
-    </section>
     <section class="card" id="flow"></section>
     <section class="card" id="tasks-card" hidden>
       <h2>📋 이어서 할 수 있는 일</h2>
       <ul class="tasks" id="tasks"></ul>
+    </section>
+  </div>
+
+  <!-- ===== 📚 오늘의 논문 (v12부터 메뉴에서) ===== -->
+  <div class="view" id="v-paper" hidden>
+    <section class="card" id="reading-card">
+      <div id="reading"></div>
     </section>
   </div>
 

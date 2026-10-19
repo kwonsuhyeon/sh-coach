@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v11';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v12';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -354,7 +354,7 @@ const hmMin = s => { const [h, m] = String(s).split(':').map(Number); return h *
 const minHm = m => `${p2(Math.floor(m / 60))}:${p2(m % 60)}`;
 
 // ============ 화면 그리기 ============
-const VIEWS = { '': '지금 무엇이 필요할까?', rest: '🌿 쉬기', start: '▶ 시작하기', log: '🧺 정리하기', run: '지금 5분' };
+const VIEWS = { '': '지금 무엇이 필요할까?', rest: '🌿 쉬기', start: '▶ 시작하기', paper: '📚 오늘의 논문', log: '🧺 정리하기', run: '지금 5분' };
 const view = () => { const v = location.hash.replace('#', ''); return v in VIEWS ? v : ''; };
 
 async function renderSync() {
@@ -454,7 +454,7 @@ function draw() {
   $('#connect').hidden = state.connected;
   $('#keycard').hidden = !state.connected || (state.hasKey && !state.rekey);
   for (const k of Object.keys(VIEWS)) $('#v-' + (k || 'home')).hidden = k !== v;
-  ({ '': drawHome, rest: drawRest, start: drawStart, log: drawLog, run: drawRun })[v]();
+  ({ '': drawHome, rest: drawRest, start: drawStart, paper: drawReading, log: drawLog, run: drawRun })[v]();
 
   const s = state.snap;
   const err = state.snapErr && state.snapErr !== '없음' ? ` · 요약 받기 실패: ${state.snapErr}` : '';
@@ -480,8 +480,9 @@ function drawHome() {
     nc.innerHTML = `<div class="muted small">이어서 할 첫 행동 · ${esc(nx.status)}${nx.when ? ' ' + esc(nx.when) : ''}</div>
       <div class="next-title">${esc(nx.title)}</div>
       ${step ? `<div class="next-step">${step.pc ? '💻 ' : ''}${esc(step.text)}${step.min ? ` <span class="muted">(${step.min}분)</span>` : ''}</div>` : ''}
-      <div class="row"><button class="btn" data-act="redo" data-tid="${nx.id}">다시 정하기</button><button class="btn primary" data-act="run" data-tid="${nx.id}">▶ 5분 시작</button></div>`;
+      <div class="row"><button class="btn" data-act="redo" data-tid="${nx.id}">다시 정하기</button><button class="btn done" data-act="task-done" data-tid="${nx.id}">✓ 했어요</button><button class="btn primary" data-act="run" data-tid="${nx.id}">▶ 5분 시작</button></div>`;
   }
+  $('#menu-paper-sub').textContent = readingSub();
   const n = todays('joy').length;
   $('#joy-line').innerHTML = n ? `✨ 오늘의 작은 즐거움 <b>${n}</b>개` : `<a href="#log">✨ 오늘의 작은 즐거움, 하나 남겨 볼까요?</a>`;
 }
@@ -581,7 +582,6 @@ function backToWork() {
 
 // ----- ▶ 시작하기 -----
 function drawStart() {
-  drawReading();
   const f = state.flow;
   const box = $('#flow');
   if (!f) {
@@ -607,15 +607,16 @@ function drawStart() {
         <button class="btn primary" data-decide="now">▶ 지금 5분 시작</button>
         <button class="btn" data-decide="later">오늘 나중에</button>
         <button class="btn" data-decide="date">날짜 정하기</button>
-        <button class="btn" data-decide="hold">보류</button>
+        <button class="btn done" data-decide="done">✓ 이미 했어요</button>
         <button class="btn" data-decide="drop">하지 않기</button>
       </div>`}
-      <div class="row"><span class="muted small">${esc(tpl.name)} ${tpl.act ? '첫 동작 사전' : '템플릿'} v${tpl.version}${f.edited ? ' · 고침' : ''}</span><button class="link" data-act="flow-cancel">취소</button></div>`;
+      <div class="row"><span class="muted small">${esc(tpl.name)} ${tpl.act ? '첫 동작 사전' : '템플릿'} v${tpl.version}${f.edited ? ' · 고침' : ''}</span><button class="link" data-act="flow-cancel">취소 (나중에 정하기)</button></div>`;
   }
   const list = openTasks().filter(t => !state.flow || t.id !== state.flow.tid);
   $('#tasks-card').hidden = !list.length;
-  $('#tasks').innerHTML = list.map(t => `<li><button class="task" data-open-task="${t.id}"><b>${esc(t.title)}</b>
-    <span class="badge">${esc(t.status)}${t.when ? ' · ' + esc(t.when) : ''}</span></button></li>`).join('');
+  $('#tasks').innerHTML = list.map(t => `<li class="task-li"><button class="task" data-open-task="${t.id}"><b>${esc(t.title)}</b>
+    <span class="badge">${esc(t.status)}${t.when ? ' · ' + esc(t.when) : ''}</span></button>
+    <button class="chip-btn done-chip" data-act="task-done" data-tid="${t.id}" aria-label="${esc(t.title)} 완료">✓ 완료</button></li>`).join('');
   document.querySelectorAll('.step-text').forEach(fitText);
 }
 // 단계 칸 높이를 문장 길이에 맞춘다 (field-sizing을 모르는 브라우저용)
@@ -640,16 +641,31 @@ async function decide(decision, when = '') {
   const tpl = tplOf(f.kind);
   if (f.isNew) await record('task-add', { tid: f.tid, title: f.title, kind: f.kind });
   await record('task-steps', { tid: f.tid, steps: f.steps, template: tpl.id, version: tpl.version, kind: f.kind, edited: !!f.edited });
-  await record('task-decide', { tid: f.tid, decision, when });
   state.flow = null;
+  if (decision === 'done') { await markDone(f.tid); location.hash = ''; return; }   // 이미 해 버린 일 — 결정 대신 완료 회고
+  await record('task-decide', { tid: f.tid, decision, when });
   if (decision === 'now') { startCount(f.tid); location.hash = '#run'; return; }
   toast({ later: '오늘 나중에 다시 보여 드릴게요', date: `${when}에 다시 보여 드릴게요`, hold: '보류함에 넣어 뒀어요', drop: '하지 않기로 정했어요. 그것도 결정이에요' }[decision]);
   location.hash = '';
 }
+// ✓ 완료 — 이어서 할 일을 이미 해 버렸을 때 (처음 화면·할 일 목록·결정 화면·머릿속 비우기 공용). PC coach-tasks가 단계까지 모두 끝으로 바꾼다
+async function markDone(tid) {
+  const run = getRun();
+  if (run && run.tid === tid) saveRun(null);
+  await record('task-review', { tid, result: '완료', obstacle: '', note: '' });
+  toast('완료로 남겼어요 ✓');
+}
+// 📚 오늘의 논문 — 처음 화면 메뉴에서 여는 화면 (v12, 예전엔 ▶ 시작하기 위쪽 카드)
+function readingSub() {
+  const r = state.snap && state.snap.reading;
+  if (!(r && r.papers && r.papers.length)) return '오늘 읽을 논문';
+  if (r.readToday || todays('reading-done').length) return '오늘 읽음 ✓';
+  const p = r.papers[0];
+  return `오늘 p.${p.from}~${p.to}${r.progress ? ` · ${r.progress.done}/${r.progress.total}편` : ''}`;
+}
 function drawReading() {
   const r = state.snap && state.snap.reading;
-  $('#reading-card').hidden = !(r && r.papers && r.papers.length);
-  if (!(r && r.papers)) return;
+  if (!(r && r.papers && r.papers.length)) { $('#reading').innerHTML = '<p class="muted">오늘 읽을 논문이 아직 없어요. PC papers-wiki에서 이달의 계보를 정하면 여기에 떠요.</p>'; return; }
   const readEv = todays('reading-done').length > 0;
   $('#reading').innerHTML = r.papers.map((p, i) => `<div class="paper">
     <div class="title">${esc(p.title)}</div>
@@ -762,7 +778,7 @@ function drawLog() {
   $('#dump-list').innerHTML = (state.dumpIds || []).map(id => all.find(t => t.id === id)).filter(Boolean).map(t => `<li class="dump">
     <b>${esc(t.title)}</b>${t.status !== '열림' ? `<span class="badge">${esc(t.status)}</span>` : `<div class="chips small-chips">
       <button class="chip-btn" data-dump="start" data-tid="${t.id}">▶ 시작하기로</button><button class="chip-btn" data-dump="later" data-tid="${t.id}">나중에</button>
-      <button class="chip-btn" data-dump="hold" data-tid="${t.id}">보류</button><button class="chip-btn" data-dump="drop" data-tid="${t.id}">하지 않기</button></div>`}</li>`).join('');
+      <button class="chip-btn" data-act="task-done" data-tid="${t.id}">✓ 완료</button><button class="chip-btn" data-dump="drop" data-tid="${t.id}">하지 않기</button></div>`}</li>`).join('');
 }
 
 // ============ 이벤트 연결 ============
@@ -784,6 +800,7 @@ $('#main').addEventListener('click', async e => {
   if (d.qtab) { ls.set('quickTab', d.qtab); state.body = null; drawLog(); if (d.qtab !== '몸') $('#quick').focus(); return; }
   if (d.body) { readBodyInputs(); state.body[d.body] = d.n; drawBodyForm(); return; }
   if (d.water) { readBodyInputs(); state.body.water = String(Math.max(0, Math.min(99, (+state.body.water || 0) + +d.water))); drawBodyForm(); return; }
+  if (d.act === 'task-done') { await markDone(d.tid); return; }   // record → render → 목록에서 빠진다
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
   // 쉬기
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
@@ -833,7 +850,7 @@ $('#main').addEventListener('click', async e => {
   if (f && d.act === 'flow-cancel') { state.flow = null; drawStart(); return; }
   if (f && d.decide) {
     f.steps = f.steps.filter(s => String(s.text).trim());
-    if (d.decide === 'now' || d.decide === 'drop') { await decide(d.decide); return; }
+    if (['now', 'drop', 'done'].includes(d.decide)) { await decide(d.decide); return; }
     f.choosing = d.decide; drawStart(); return;
   }
   if (f && d.act === 'choose-back') { f.choosing = null; drawStart(); return; }
