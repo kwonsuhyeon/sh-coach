@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.dropboxapi.com https://content.dropboxapi.com; style-src 'self' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; connect-src 'self' https://api.dropboxapi.com https://content.dropboxapi.com https://ntfy.sh; style-src 'self' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; img-src 'self' data:">
 <meta name="theme-color" content="#f9f9f7">
 <title>SH 코치</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -141,6 +141,16 @@
     <button class="btn" id="btn-alarm-test">🔔 알람 시험</button>
   </div>
   <p class="muted small">앱이 화면에 떠 있을 때만 울려요. 타이머 동안은 화면을 켜 둬요.</p>
+  <h3 class="small">📣 폰 푸시 (ntfy)</h3>
+  <div class="push-row">
+    <input id="ntfy-topic" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="주제 이름 붙여넣기">
+    <button class="btn" id="btn-ntfy-copy">복사</button>
+  </div>
+  <div class="checks">
+    <button class="btn" id="btn-ntfy-test">🔔 지금 시험 알림</button>
+    <button class="link small" id="btn-ntfy-new">새 이름 만들기</button>
+  </div>
+  <p class="muted small">PC와 앱이 꺼져 있어도 약속 시간에 폰으로 알려 줘요. <a href="https://play.google.com/store/apps/details?id=io.heckel.ntfy" target="_blank" rel="noopener">ntfy 앱</a>을 설치하고 이 주제를 구독한 뒤, 구독 설정에서 <b>즉시 전달</b>을 켜고 배터리를 <b>제한 없음</b>으로 바꿔 주세요. 주제 이름은 비밀번호처럼 남에게 보여 주지 마세요.</p>
   <div class="row">
     <button class="btn" id="btn-disconnect">연결 끊기</button>
     <button class="btn" id="btn-rekey">암호 문구 다시 입력</button>

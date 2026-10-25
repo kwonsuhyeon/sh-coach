@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v14';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v15';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -238,6 +238,29 @@ const PRAISE = {
   late: ['미뤘다가도 시작했어요. 그게 진짜예요', '돌아왔네요, 잘했어요'],
 };
 const pick = list => list[Math.floor(Math.random() * list.length)];
+
+// ============ 폰 푸시 (ntfy) — PRD: tasks/prd-selfcare-promise-push.md ============
+// PC·앱이 꺼져 있어도 오도록 ntfy.sh 서버에 예약 발송을 맡긴다. 알림을 보내고 지우는 일은 이 객체만 한다
+// (나중에 Firebase 등으로 바꿀 때 여기만 고친다). 본문은 공용 서버를 평문으로 지나므로 종류·첫 동작만 넣는다.
+// JSON 발행에서 예약 시각은 `delay` 칸(Unix 초 문자열) — `at`은 무시되고 바로 보내진다(2026-10-25 확인).
+const NTFY = { base: 'https://ntfy.sh', topicLen: 24, click: 'https://kwonsuhyeon.github.io/sh-coach/' };
+const push = {
+  topic() { return (ls.get('ntfy.topic') || '').trim(); },
+  newTopic() { const a = 'abcdefghijklmnopqrstuvwxyz0123456789', r = crypto.getRandomValues(new Uint8Array(NTFY.topicLen)); return 'shc-' + Array.from(r, b => a[b % a.length]).join(''); },
+  // at: Date 또는 ms(없으면 바로) · 돌려주는 값: 메시지 id (취소에 쓴다)
+  async send({ title, message, at, priority = 3, tags = [], click = NTFY.click }) {
+    const topic = push.topic(); if (!topic) throw new Error('ntfy 주제 이름이 없어요');
+    const body = { topic, title, message, priority, tags, click };
+    if (at) body.delay = String(Math.floor(+at / 1000));
+    const r = await fetch(NTFY.base + '/', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error('ntfy ' + r.status);
+    return (await r.json()).id;
+  },
+  async cancel(id) {
+    const topic = push.topic(); if (!topic || !id) return;
+    await fetch(`${NTFY.base}/${encodeURIComponent(topic)}/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+  },
+};
 const fmt = ms => `${Math.floor(ms / 60000)}:${p2(Math.floor(ms / 1000) % 60)}`;
 const alarmOpt = () => ({ sound: ls.get('alarm.sound') !== false, vibe: ls.get('alarm.vibe') !== false });
 
@@ -966,7 +989,21 @@ $('#btn-settings').onclick = async () => {
   $('#settings-info').textContent = `${state.connected ? 'Dropbox 연결됨' : '연결 안 됨'} · ${state.hasKey ? '🔐 암호화 켜짐' : '암호 문구 없음'} · 폰에 있는 기록 ${ev.length}건 (올리지 못한 것 ${ev.filter(e => !e.sent).length}건)` +
     (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '') + ` · 앱 ${APP_VERSION}` + (state.snapErr ? ` · 요약: ${state.snapErr}` : '');
   $('#opt-sound').checked = alarmOpt().sound; $('#opt-vibe').checked = alarmOpt().vibe;
+  $('#ntfy-topic').value = push.topic();
   $('#settings').showModal();
+};
+$('#ntfy-topic').onchange = e => { ls.set('ntfy.topic', e.target.value.trim()); toast(e.target.value.trim() ? '주제 이름을 저장했어요' : '폰 푸시를 껐어요'); };
+$('#btn-ntfy-new').onclick = () => {
+  if (push.topic() && !confirm('새 이름을 만들면 ntfy 앱에서 다시 구독해야 해요. 만들까요?')) return;
+  const t = push.newTopic(); ls.set('ntfy.topic', t); $('#ntfy-topic').value = t; toast('새 이름을 만들었어요. 복사해서 ntfy 앱에 구독하세요');
+};
+$('#btn-ntfy-copy').onclick = async () => {
+  const t = push.topic(); if (!t) { toast('주제 이름이 없어요'); return; }
+  try { await navigator.clipboard.writeText(t); toast('복사했어요'); } catch { $('#ntfy-topic').select(); toast('길게 눌러 복사해 주세요'); }
+};
+$('#btn-ntfy-test').onclick = async () => {
+  try { await push.send({ title: '🔔 코치 앱 시험 알림', message: '이 알림이 보이면 폰 푸시 연결 완료예요. 누르면 코치 앱이 열려요.', priority: 4, tags: ['green_heart'] }); toast('보냈어요. 10초 안에 와야 해요'); }
+  catch (e) { toast(navigator.onLine ? '보내지 못했어요: ' + e.message : '인터넷이 연결되면 다시 눌러 주세요'); }
 };
 $('#opt-sound').onchange = e => ls.set('alarm.sound', e.target.checked);
 $('#opt-vibe').onchange = e => ls.set('alarm.vibe', e.target.checked);

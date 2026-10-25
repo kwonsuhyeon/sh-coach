@@ -169,3 +169,7 @@ dialog h3 { margin: 14px 0 8px; }
 .when-grid { display: grid; grid-template-columns: 1.3fr 1fr; gap: 8px; }
 .when-grid .field { margin: 0; min-width: 0; }
 .plan-line a { color: var(--muted); text-decoration: none; }
+/* 📣 폰 푸시 (ntfy) 주제 칸 */
+.push-row { display: flex; gap: 8px; align-items: center; margin: 6px 0 8px; }
+.push-row input { flex: 1; min-width: 0; font: inherit; font-size: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; background: #fff; }
+.push-row input:focus { outline: 2px solid var(--blue-soft); border-color: var(--blue); }
