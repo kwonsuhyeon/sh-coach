@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v15';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v16';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -389,6 +389,94 @@ function freeSlots() {
 const hmMin = s => { const [h, m] = String(s).split(':').map(Number); return h * 60 + (m || 0); };
 const minHm = m => `${p2(Math.floor(m / 60))}:${p2(m % 60)}`;
 
+// ============ 💚 나와의 약속 — PRD: tasks/prd-selfcare-promise-push.md US-004 ============
+// 종류·요일·기본 창은 PC wiki/coach/selfcare.md(요약 selfcare). 아침에 한 번 [이대로 약속하기] → promise-set 이벤트.
+// 21시 뒤(새벽 3시 전까지)에는 같은 카드가 "내일의 약속"으로 뜬다. 지키지 못한 약속에는 아무 표시도 하지 않는다.
+const PROMISE = { stepMin: 30, eveningH: 21, firstMin: 5 * 60, lastMin: 23 * 60 + 30 };
+const CARE_CHIPS = [['점심 뒤', '13:00', '14:00'], ['퇴근 길', '18:00', '19:00'], ['저녁', '19:30', '21:00'], ['자기 전', '22:00', '23:00']];
+const selfcare = () => (state.snap && state.snap.selfcare) || [];
+const kindOf = id => selfcare().find(c => c.id === id);
+const wdOf = date => new Date(date + 'T12:00:00').getDay();
+const isEvening = () => { if (state.demoEve) return true; const h = new Date().getHours(); return h >= PROMISE.eveningH || h < C.DAY_CUTOFF_H; };
+const nowDayMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + (d.getHours() < C.DAY_CUTOFF_H ? 1440 : 0); };   // 새벽은 어제의 연장
+// 그날 확정한 약속 = 그날을 가리키는 가장 최근 promise-set (PC 병합 전에도 폰 기록 그대로 — US-014 전까지 PC는 이 이벤트를 읽지 않는다)
+function promiseSet(date) {
+  const ev = state.events.filter(e => e.type === 'promise-set' && e.payload.date === date).sort((a, b) => b.ts - a.ts)[0];
+  return ev ? ev.payload : null;
+}
+// 카드에서 고치는 중인 값 — 확정한 날이면 그 약속에서, 아니면 요일 기본값에서 시작한다
+function promiseDraft(date) {
+  const drafts = state.pdrafts || (state.pdrafts = {});
+  if (drafts[date]) return drafts[date];
+  const set = promiseSet(date);
+  const rows = selfcare().filter(c => c.days.includes(wdOf(date))).map(c => {
+    const p = set && set.promises.find(x => x.kind === c.id);
+    return { kind: c.id, start: p ? p.start : c.start, end: p ? p.end : c.end, off: !!set && !p, open: false };
+  });
+  return (drafts[date] = { date, rows });
+}
+function timeOptions(cur) {
+  const list = []; for (let m = PROMISE.firstMin; m <= PROMISE.lastMin; m += PROMISE.stepMin) list.push(minHm(m));
+  if (cur && !list.includes(cur)) list.push(cur), list.sort();   // selfcare.md에 17:15처럼 적었어도 그대로 고를 수 있게
+  return list.map(t => `<option ${t === cur ? 'selected' : ''}>${t}</option>`).join('');
+}
+function promiseCard(date) {
+  const label = date === today() ? '오늘' : '내일';
+  const set = promiseSet(date);
+  if (set && state.pedit !== date) {
+    const ps = [...set.promises].sort((a, b) => a.start.localeCompare(b.start));
+    const emo = p => (kindOf(p.kind) || {}).emoji || '💚';
+    let line = ps.length ? `💚 ${label === '오늘' ? '' : '내일 '}약속 ${ps.length}개` : `💚 ${label}은 약속 없이 가요`;
+    if (ps.length && label === '내일') line += ` · 첫 ${emo(ps[0])} ${ps[0].start}`;
+    else if (ps.length) {
+      const now = nowDayMin(), cur = ps.find(p => hmMin(p.start) <= now && now < hmMin(p.end)), nx = ps.find(p => hmMin(p.start) > now);
+      line += cur ? ` · 지금 ${emo(cur)} ~${cur.end}` : nx ? ` · 다음 ${emo(nx)} ${nx.start}` : ' · 오늘 창은 모두 지났어요';
+    }
+    return `<section class="card promise folded"><div class="next-head"><span>${esc(line)}</span>
+      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div></section>`;
+  }
+  const d = promiseDraft(date);
+  if (!d.rows.length) return '';
+  const on = d.rows.map((r, i) => [r, i]).filter(([r]) => !r.off), off = d.rows.map((r, i) => [r, i]).filter(([r]) => r.off);
+  const row = ([r, i]) => {
+    const c = kindOf(r.kind) || { name: r.kind, emoji: '💚' };
+    const step = c.first ? `첫 동작: ${c.first.text}` : '';
+    return `<div class="p-row">
+      <div class="p-head"><b>${esc(c.emoji)} ${esc(c.name)}</b>
+        ${r.start ? `<button class="p-win ${r.open ? 'on' : ''}" data-pwin="${i}" data-pd="${date}" aria-label="${esc(c.name)} 시간 바꾸기">${r.start}~${r.end}</button>` : ''}</div>
+      ${r.start ? '' : `<p class="muted small p-ask">언제 할까요?</p><div class="chips small-chips">${CARE_CHIPS.map(([n, s, e], k) =>
+        `<button class="chip-btn" data-pcare="${i}" data-pd="${date}" data-k="${k}">${n} <span class="muted">${s}</span></button>`).join('')}</div>`}
+      ${r.open ? `<div class="p-edit"><select class="field" data-pstart="${i}" data-pd="${date}" aria-label="시작">${timeOptions(r.start)}</select><span>~</span>
+        <select class="field" data-pend="${i}" data-pd="${date}" aria-label="끝">${timeOptions(r.end)}</select></div>` : ''}
+      <div class="p-sub"><span class="muted small">${esc(step)}</span><button class="link small" data-poff="${i}" data-pd="${date}">${label}은 빼기</button></div></div>`;
+  };
+  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>
+    ${on.length ? on.map(row).join('') : `<p class="muted small">${label}은 약속 없이 가도 괜찮아요.</p>`}
+    ${off.length ? `<p class="muted small p-off">뺀 것: ${off.map(([r, i]) => `<button class="link small" data-pon="${i}" data-pd="${date}">${esc((kindOf(r.kind) || {}).emoji || '')} ${esc((kindOf(r.kind) || {}).name || r.kind)} 다시 넣기</button>`).join(' · ')}</p>` : ''}
+    <div class="row ${state.pedit === date ? 'two' : ''}">${state.pedit === date ? `<button class="btn" data-act="promise-cancel" data-date="${date}">그대로 두기</button>` : ''}
+      <button class="btn primary p-ok" data-act="promise-ok" data-date="${date}">이대로 약속하기</button></div></section>`;
+}
+// 처음 화면 맨 위 — 낮에는 오늘 카드, 21시 뒤에는 (오늘 약속 한 줄 +) 내일 카드
+function drawPromises() {
+  const box = $('#promise-box');
+  if (!selfcare().length) { box.innerHTML = ''; return; }
+  const t = today();
+  box.innerHTML = isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t);
+}
+const promiseHomeKey = () => (selfcare().length ? $('#promise-box').textContent.replace(/\s+/g, '') : '');   // clock()이 15초마다 바뀌었는지 본다
+async function confirmPromises(date) {
+  const d = promiseDraft(date), rows = d.rows.filter(r => !r.off);
+  const miss = rows.find(r => !r.start);
+  if (miss) { toast(`${(kindOf(miss.kind) || {}).name || '약속'}은 언제 할지 골라 주세요`); return; }
+  const promises = rows.map(r => {
+    const c = kindOf(r.kind) || {};
+    return { id: `${date}-${r.kind}`, kind: r.kind, date, start: r.start, end: r.end, firstStep: (c.first && c.first.text) || '', small: (c.small && c.small.text) || '' };
+  });
+  await record('promise-set', { date, promises });   // 푸시 예약은 US-005에서 여기에 붙인다
+  delete state.pdrafts[date]; state.pedit = null;
+  toast(promises.length ? `💚 약속 ${promises.length}개를 잡았어요` : '💚 오늘은 약속 없이 가요');
+}
+
 // ============ 화면 그리기 ============
 const VIEWS = { '': '지금 무엇이 필요할까?', rest: '🌿 쉬기', start: '▶ 시작하기', paper: '📚 오늘의 논문', log: '🧺 정리하기', run: '지금 5분' };
 const view = () => { const v = location.hash.replace('#', ''); return v in VIEWS ? v : ''; };
@@ -501,6 +589,7 @@ function draw() {
 
 // ----- 처음 -----
 function drawHome() {
+  drawPromises();
   // 돌아보기: "지금 시작"을 누른 지 30분이 지났는데 아직 돌아보지 않은 할 일 하나
   const rv = openTasks().find(t => t.status === '진행' && t.decidedTs && t.decidedTs < Date.now() - 30 * 60000 &&
     t.reviewedTs < t.decidedTs && !ls.get('dismiss.' + t.id + '.' + t.decidedTs));
@@ -802,7 +891,7 @@ function clock() {
   // 처음 화면: 예약해 둔 시각이 되면 이어서 할 일 카드를 새로 그린다 (15초마다 확인)
   if (view() === '' && now - (state.dueCheck || 0) > 15000) {
     state.dueCheck = now;
-    const key = dueTasks().map(t => t.id).join();
+    const key = dueTasks().map(t => t.id).join() + '|' + isEvening() + '|' + promiseHomeKey();   // 약속 한 줄("다음 🏋️ 17:00")·21시 전환도
     if (state.dueKey !== undefined && key !== state.dueKey) drawHome();
     state.dueKey = key;
   }
@@ -854,6 +943,19 @@ $('#main').addEventListener('click', async e => {
   if (d.body) { readBodyInputs(); state.body[d.body] = d.n; drawBodyForm(); return; }
   if (d.water) { readBodyInputs(); state.body.water = String(Math.max(0, Math.min(99, (+state.body.water || 0) + +d.water))); drawBodyForm(); return; }
   if (d.act === 'task-done') { await markDone(d.tid); return; }   // record → render → 목록에서 빠진다
+  // 💚 오늘의 약속 카드
+  if (d.pwin !== undefined || d.poff !== undefined || d.pon !== undefined || d.pcare !== undefined) {
+    const dr = (state.pdrafts || {})[d.pd]; if (!dr) return;
+    const r = dr.rows[+(d.pwin ?? d.poff ?? d.pon ?? d.pcare)];
+    if (d.pwin !== undefined) r.open = !r.open;
+    else if (d.poff !== undefined) { r.off = true; r.open = false; }
+    else if (d.pon !== undefined) r.off = false;
+    else { const [, s, e] = CARE_CHIPS[+d.k]; r.start = s; r.end = e; }
+    drawPromises(); return;
+  }
+  if (d.act === 'promise-ok') { await confirmPromises(d.date); return; }   // record → render → 접힌 한 줄
+  if (d.act === 'promise-edit') { state.pedit = d.date; delete (state.pdrafts || {})[d.date]; drawPromises(); return; }
+  if (d.act === 'promise-cancel') { state.pedit = null; delete (state.pdrafts || {})[d.date]; drawPromises(); return; }
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
   // 쉬기
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
@@ -945,6 +1047,14 @@ $('#main').addEventListener('input', e => {
   const f = state.flow; if (!f) return;
   if (e.target.dataset.step !== undefined) { f.steps[+e.target.dataset.step].text = e.target.value.replace(/\n/g, ' '); f.edited = true; fitText(e.target); }
   if (e.target.dataset.min !== undefined) { const m = parseInt(e.target.value, 10); f.steps[+e.target.dataset.min].min = m > 0 ? m : null; f.edited = true; }
+});
+// 약속 시간 창 고르기 — 시작을 옮기면 길이는 그대로, 끝이 시작보다 앞서면 30분 뒤로
+$('#main').addEventListener('change', e => {
+  const t = e.target.dataset, dr = (state.pdrafts || {})[t.pd]; if (!dr || (t.pstart === undefined && t.pend === undefined)) return;
+  const r = dr.rows[+(t.pstart ?? t.pend)], len = hmMin(r.end) - hmMin(r.start);
+  if (t.pstart !== undefined) { r.start = e.target.value; r.end = minHm(Math.min(hmMin(r.start) + (len > 0 ? len : 60), 24 * 60 - 1)); }
+  else { r.end = e.target.value; if (hmMin(r.end) <= hmMin(r.start)) r.end = minHm(hmMin(r.start) + PROMISE.stepMin); }
+  drawPromises();
 });
 $('#main').addEventListener('keydown', e => {
   if (e.key !== 'Enter' || e.isComposing) return;
@@ -1054,6 +1164,14 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
         endAt: now + (state.demoSec ? state.demoSec * 1000 : a.min * 60000), ...(q.get('end') ? { ending: true, timeUp: true, endedAt: now } : {}) });
     }
     if (q.get('back')) ls.set('resting', { back: true, backAt: now });
+    // 약속 카드 확인용: &eve=1 (21시 뒤처럼 내일 카드) · &promised=today|tomorrow (확정한 한 줄) · &pwin=0 (첫 줄 시간 고르기 펼침)
+    state.demoEve = !!q.get('eve');
+    if (q.get('promised')) {
+      const date = q.get('promised') === 'tomorrow' ? addDaysStr(today(), 1) : today();
+      const promises = selfcare().filter(c => c.days.includes(wdOf(date)) && c.start).map(c => ({ id: `${date}-${c.id}`, kind: c.id, date, start: c.start, end: c.end, firstStep: '', small: '' }));
+      state.events = [{ id: 'demoP', ts: now, date: today(), type: 'promise-set', payload: { date, promises }, sent: true }];
+    }
+    if (q.get('pwin')) { const dr = promiseDraft(today()); if (dr.rows[+q.get('pwin')]) dr.rows[+q.get('pwin')].open = true; }
     if (q.get('run')) {
       const delays = +q.get('delays') || 0;
       state.run = q.get('phase') === 'run' ? { tid: q.get('run'), phase: 'run', endAt: now + runMs(), startedAt: now, praise: PRAISE.quick[0], delays, delaysTotal: delays }

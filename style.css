@@ -173,3 +173,23 @@ dialog h3 { margin: 14px 0 8px; }
 .push-row { display: flex; gap: 8px; align-items: center; margin: 6px 0 8px; }
 .push-row input { flex: 1; min-width: 0; font: inherit; font-size: 14px; border: 1px solid var(--line); border-radius: 10px; padding: 9px 10px; background: #fff; }
 .push-row input:focus { outline: 2px solid var(--blue-soft); border-color: var(--blue); }
+
+/* ===== 💚 오늘의 약속 (US-004) ===== */
+:root { --promise: #2f8f5b; --promise-soft: #e9f5ee; }
+.card.promise { border-color: var(--promise-soft); box-shadow: inset 4px 0 0 var(--promise); }
+.card.promise.folded { padding: 12px 16px; }
+.card.promise h2 { color: var(--promise); }
+.p-row { padding: 10px 0; border-top: 1px solid var(--line); }
+.p-row:first-of-type { border-top: 0; padding-top: 0; }
+.p-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.p-win { font: inherit; font-size: 15px; font-variant-numeric: tabular-nums; border: 1px solid var(--line); background: var(--promise-soft); color: var(--promise);
+  border-radius: 999px; padding: 4px 12px; cursor: pointer; flex: none; }
+.p-win.on { border-color: var(--promise); }
+.p-edit { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.p-edit .field { margin: 0; flex: 1; min-width: 0; padding: 8px; }
+.p-sub { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-top: 4px; }
+.p-sub .link { flex: none; }
+.p-ask { margin: 6px 0 4px; }
+.p-off { margin: 8px 0 0; }
+.p-ok { flex: 1; }
+.p-ok.btn.primary { background: var(--promise); border-color: var(--promise); }
