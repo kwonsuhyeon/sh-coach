@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v16';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v17';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -472,9 +472,61 @@ async function confirmPromises(date) {
     const c = kindOf(r.kind) || {};
     return { id: `${date}-${r.kind}`, kind: r.kind, date, start: r.start, end: r.end, firstStep: (c.first && c.first.text) || '', small: (c.small && c.small.text) || '' };
   });
-  await record('promise-set', { date, promises });   // 푸시 예약은 US-005에서 여기에 붙인다
+  await record('promise-set', { date, promises });
   delete state.pdrafts[date]; state.pedit = null;
   toast(promises.length ? `💚 약속 ${promises.length}개를 잡았어요` : '💚 오늘은 약속 없이 가요');
+  syncPromisePush();
+}
+
+// ============ 💚 약속 푸시 예약 — PRD US-005 ============
+// 약속 하나에 ntfy 예약 4건: 창 열림 · 창 중간(창이 1시간 이상일 때) · 마감 30분 전 · 마감 10분 전.
+// localStorage promisePush = { 약속id: { sig: '날짜 시작-끝', ids: [ntfy 메시지 id] } }.
+// 확정한 약속과 맞춰 보는 방식(reconcile)이라 시간을 바꾸거나 빼면 옛 예약을 지우고 다시 건다.
+// 오프라인이거나 보내기에 실패하면 저장하지 않고 두었다가 online·앱 열림 때 다시 맞춘다. 지난 시각은 걸지 않는다.
+const PUSH_LEAD_MS = 15 * 1000;   // ntfy 예약은 최소 10초 뒤부터 받는다
+function promiseAlarms(p) {
+  const c = kindOf(p.kind) || {}, emo = c.emoji || '💚', name = c.name || '약속';
+  const at = hm => new Date(`${p.date}T${hm}:00`).getTime();
+  const s = at(p.start), e = at(p.end), win = (e - s) / 60000;
+  const first = p.firstStep || (c.first && c.first.text) || '', small = p.small || (c.small && c.small.text) || first;
+  const fMin = c.first && c.first.min ? ` (${c.first.min}분)` : '', sMin = c.small && c.small.min ? ` (${c.small.min}분)` : '';
+  const list = [{ t: s, priority: 3, title: `${emo} ${name} 창이 열렸어요`, message: `첫 동작: ${first}${fMin} · ${p.end}까지` }];
+  if (win >= 60) list.push({ t: s + (e - s) / 2, priority: 3, title: `${emo} ${name} · ${p.end}까지`, message: `첫 동작: ${first}${fMin}` });
+  list.push({ t: e - 30 * 60000, priority: 4, title: `${emo} ${name} · 30분 남았어요`, message: `작게: ${small}${sMin}` });
+  list.push({ t: e - 10 * 60000, priority: 5, title: `${emo} ${name} · 10분 남았어요`, message: `작게: ${small}${sMin}` });
+  return list.filter((a, i) => (i === 0 || a.t > s) && a.t > Date.now() + PUSH_LEAD_MS);
+}
+let pushSyncing = null;
+function syncPromisePush() {
+  if (pushSyncing) return pushSyncing.then(() => syncPromisePush());   // 겹쳐 돌면 같은 알림이 두 번 걸린다
+  return (pushSyncing = (async () => {
+    if (!push.topic() || !navigator.onLine || state.demo) return;
+    const t = today(), events = await idb.events();
+    const latest = {};   // 날짜별 가장 최근 promise-set
+    for (const e of events) if (e.type === 'promise-set' && e.payload.date >= t && (!latest[e.payload.date] || e.ts > latest[e.payload.date].ts)) latest[e.payload.date] = e;
+    const want = {};
+    for (const e of Object.values(latest)) for (const p of e.payload.promises) want[p.id] = p;
+    const saved = ls.get('promisePush') || {};
+    for (const id of Object.keys(saved)) {
+      const p = want[id];
+      if (p && saved[id].sig === `${p.date} ${p.start}-${p.end}`) continue;
+      if (!p && id.slice(0, 10) < t) { delete saved[id]; continue; }   // 지난 날 약속은 ntfy가 이미 보냈다
+      for (const mid of saved[id].ids) await push.cancel(mid);
+      delete saved[id]; ls.set('promisePush', saved);
+    }
+    for (const p of Object.values(want)) {
+      if (saved[p.id]) continue;
+      const ids = [];
+      try {
+        for (const a of promiseAlarms(p)) ids.push(await push.send({ title: a.title, message: a.message, at: a.t, priority: a.priority, tags: ['green_heart'], click: `${NTFY.click}#promise/${p.id}` }));
+      } catch (err) {
+        for (const mid of ids) await push.cancel(mid);   // 반쯤 걸린 예약은 지우고 다음에 통째로 다시
+        console.warn('약속 푸시 예약 실패', err); return;
+      }
+      saved[p.id] = { sig: `${p.date} ${p.start}-${p.end}`, ids }; ls.set('promisePush', saved);
+    }
+    ls.set('promisePush', saved);
+  })().finally(() => { pushSyncing = null; }));
 }
 
 // ============ 화면 그리기 ============
@@ -1136,9 +1188,9 @@ $('#btn-disconnect').onclick = async () => {
   if (!confirm('Dropbox 연결을 끊을까요? 올리지 못한 기록은 폰에 남아 있다가 다시 연결하면 올라가요.')) return;
   await dbx.logout(); state.connected = false; $('#settings').close(); draw();
 };
-window.addEventListener('online', () => { flush(); loadSnapshot().then(render); });
+window.addEventListener('online', () => { flush(); loadSnapshot().then(render).then(syncPromisePush); });
 window.addEventListener('offline', renderSync);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { flush(); loadSnapshot().then(render); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { flush(); loadSnapshot().then(render).then(syncPromisePush); } });
 
 // ============ 시작 ============
 (async () => {
@@ -1149,6 +1201,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
   if (C.COACH_ROOT && new URLSearchParams(location.search).has('demo')) {
     state.snap = await (await fetch('demo-snapshot.json')).json();
     state.connected = true; state.hasKey = true; state.events = [];
+    state.demo = !new URLSearchParams(location.search).get('pushtest');   // 미리보기는 푸시를 걸지 않는다 (&pushtest=1이면 시험용 주제로 건다)
     // 화면 확인용: ?demo&flow=제목&ob=막막함&choose=later · ?demo&rest=low-10 · ?demo&run=t_demo1
     const q = new URLSearchParams(location.search);
     if (q.get('flow')) { const k = guessKind(q.get('flow')); state.flow = { isNew: true, tid: 't_demoX', title: q.get('flow'), kind: k, obstacle: q.get('ob') || '', device: 'phone', steps: buildSteps(k, q.get('ob') || '', 'phone'), edited: false, choosing: q.get('choose') || null }; }
@@ -1188,4 +1241,5 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
   render();
   flush();
   prune();
+  syncPromisePush();   // 꺼져 있던 동안 못 건 약속 푸시를 건다
 })();
