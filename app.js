@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v17';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v18';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -420,6 +420,8 @@ function timeOptions(cur) {
   if (cur && !list.includes(cur)) list.push(cur), list.sort();   // selfcare.md에 17:15처럼 적었어도 그대로 고를 수 있게
   return list.map(t => `<option ${t === cur ? 'selected' : ''}>${t}</option>`).join('');
 }
+// 주제 이름이 없으면 약속 알림이 하나도 안 걸린다 → 확정한 카드에 늘 보이게 (2026-10-28 폰 저장소가 비어 알림이 안 왔다)
+const pushOffNote = () => (push.topic() ? '' : `<p class="small p-off">🔕 폰 알림이 꺼져 있어요 · <button class="link small" data-act="open-settings">설정에서 ntfy 주제 넣기</button></p>`);
 function promiseCard(date) {
   const label = date === today() ? '오늘' : '내일';
   const set = promiseSet(date);
@@ -433,7 +435,7 @@ function promiseCard(date) {
       line += cur ? ` · 지금 ${emo(cur)} ~${cur.end}` : nx ? ` · 다음 ${emo(nx)} ${nx.start}` : ' · 오늘 창은 모두 지났어요';
     }
     return `<section class="card promise folded"><div class="next-head"><span>${esc(line)}</span>
-      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div></section>`;
+      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${ps.length ? pushOffNote() : ''}</section>`;
   }
   const d = promiseDraft(date);
   if (!d.rows.length) return '';
@@ -474,7 +476,7 @@ async function confirmPromises(date) {
   });
   await record('promise-set', { date, promises });
   delete state.pdrafts[date]; state.pedit = null;
-  toast(promises.length ? `💚 약속 ${promises.length}개를 잡았어요` : '💚 오늘은 약속 없이 가요');
+  toast(!promises.length ? '💚 오늘은 약속 없이 가요' : push.topic() ? `💚 약속 ${promises.length}개를 잡았어요` : `💚 약속 ${promises.length}개를 잡았어요 · 폰 알림은 꺼져 있어요`);
   syncPromisePush();
 }
 
@@ -1005,7 +1007,8 @@ $('#main').addEventListener('click', async e => {
     else { const [, s, e] = CARE_CHIPS[+d.k]; r.start = s; r.end = e; }
     drawPromises(); return;
   }
-  if (d.act === 'promise-ok') { await confirmPromises(d.date); return; }   // record → render → 접힌 한 줄
+  if (d.act === 'promise-ok') { await confirmPromises(d.date); return; }
+  if (d.act === 'open-settings') { $('#btn-settings').click(); return; }   // record → render → 접힌 한 줄
   if (d.act === 'promise-edit') { state.pedit = d.date; delete (state.pdrafts || {})[d.date]; drawPromises(); return; }
   if (d.act === 'promise-cancel') { state.pedit = null; delete (state.pdrafts || {})[d.date]; drawPromises(); return; }
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
@@ -1154,7 +1157,7 @@ $('#btn-settings').onclick = async () => {
   $('#ntfy-topic').value = push.topic();
   $('#settings').showModal();
 };
-$('#ntfy-topic').onchange = e => { ls.set('ntfy.topic', e.target.value.trim()); toast(e.target.value.trim() ? '주제 이름을 저장했어요' : '폰 푸시를 껐어요'); };
+$('#ntfy-topic').onchange = e => { ls.set('ntfy.topic', e.target.value.trim()); drawPromises(); toast(e.target.value.trim() ? '주제 이름을 저장했어요' : '폰 푸시를 껐어요'); };
 $('#btn-ntfy-new').onclick = () => {
   if (push.topic() && !confirm('새 이름을 만들면 ntfy 앱에서 다시 구독해야 해요. 만들까요?')) return;
   const t = push.newTopic(); ls.set('ntfy.topic', t); $('#ntfy-topic').value = t; toast('새 이름을 만들었어요. 복사해서 ntfy 앱에 구독하세요');
