@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v19';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v20';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -463,10 +463,10 @@ function promiseCard(date) {
       line += cur ? ` · 지금 ${emo(cur)} ~${cur.end}` : nx ? ` · 다음 ${emo(nx)} ${nx.start}` : ' · 오늘 창은 모두 지났어요';
     }
     return `<section class="card promise folded"><div class="next-head"><span>${esc(line)}</span>
-      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${dayBar(date)}${ps.length ? pushOffNote() : ''}</section>`;
+      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${dayBar(date)}${promiseGoBtn(date)}${ps.length ? pushOffNote() : ''}</section>`;
   }
   const d = promiseDraft(date);
-  if (!d.rows.length) return dayType(date) ? `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${researchPromises(date).length ? pushOffNote() : ''}</section>` : '';
+  if (!d.rows.length) return dayType(date) ? `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${promiseGoBtn(date)}${researchPromises(date).length ? pushOffNote() : ''}</section>` : '';
   const on = d.rows.map((r, i) => [r, i]).filter(([r]) => !r.off), off = d.rows.map((r, i) => [r, i]).filter(([r]) => r.off);
   const row = ([r, i]) => {
     const c = kindOf(r.kind) || { name: r.kind, emoji: '💚' };
@@ -480,7 +480,7 @@ function promiseCard(date) {
         <select class="field" data-pend="${i}" data-pd="${date}" aria-label="끝">${timeOptions(r.end)}</select></div>` : ''}
       <div class="p-sub"><span class="muted small">${esc(step)}</span><button class="link small" data-poff="${i}" data-pd="${date}">${label}은 빼기</button></div></div>`;
   };
-  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}
+  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${promiseGoBtn(date)}
     ${on.length ? on.map(row).join('') : `<p class="muted small">${label}은 약속 없이 가도 괜찮아요.</p>`}
     ${off.length ? `<p class="muted small p-off">뺀 것: ${off.map(([r, i]) => `<button class="link small" data-pon="${i}" data-pd="${date}">${esc((kindOf(r.kind) || {}).emoji || '')} ${esc((kindOf(r.kind) || {}).name || r.kind)} 다시 넣기</button>`).join(' · ')}</p>` : ''}
     <div class="row ${state.pedit === date ? 'two' : ''}">${state.pedit === date ? `<button class="btn" data-act="promise-cancel" data-date="${date}">그대로 두기</button>` : ''}
@@ -491,7 +491,7 @@ function drawPromises() {
   const box = $('#promise-box');
   if (!selfcare().length && !daytypes()) { box.innerHTML = ''; return; }
   const t = today();
-  box.innerHTML = isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t);
+  box.innerHTML = prunBanner() + (isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t));
 }
 const promiseHomeKey = () => (selfcare().length || daytypes() ? $('#promise-box').textContent.replace(/\s+/g, '') : '');   // clock()이 15초마다 바뀌었는지 본다
 async function confirmPromises(date) {
@@ -530,6 +530,11 @@ function promiseAlarms(p) {
     && a.t > Date.now() + PUSH_LEAD_MS && a.t < Date.now() + PUSH_MAX_MS);
 }
 // US-103: 다음 날이 학교 가는 요일이고 아직 셔틀/차를 안 골랐으면 그 전날 밤 23:00에 한 번 묻는다. 안 고르면 셔틀 그대로
+function quietAlarm(p, startedAt) {   // US-006: 시작한 뒤 남는 알림 한 건
+  const k = kindOf(p.kind) || {}, t = Math.max(new Date(`${p.date}T${p.end}:00`).getTime(), startedAt + 90 * 60000);
+  if (t <= Date.now() + PUSH_LEAD_MS || t >= Date.now() + PUSH_MAX_MS) return [];
+  return [{ t, priority: 2, title: `${k.emoji || '💚'} ${k.name || '약속'} 하는 중`, message: '끝났으면 [종료했어요]만 눌러 주세요' }];
+}
 const MOVE_ASK_HM = '23:00';
 function moveAlarms(date) {   // date = 학교 가는 날
   const dt = dayType(date), t = new Date(`${addDaysStr(date, -1)}T${MOVE_ASK_HM}:00`).getTime();
@@ -546,8 +551,13 @@ function syncPromisePush() {
     const want = {}, last = (type, date) => events.filter(e => e.type === type && e.payload.date === date).sort((x, y) => y.ts - x.ts)[0];
     for (const date of [0, 1, 2, 3].map(n => addDaysStr(t, n))) {
       const set = last('promise-set', date), mv = last('day-move', date);
-      for (const p of [...(set ? set.payload.promises : []), ...researchPromises(date, mv ? mv.payload.move : 'shuttle')])
-        want[p.id] = { date, sig: `${p.date} ${p.start}-${p.end}`, alarms: () => promiseAlarms(p), click: `#promise/${p.id}` };
+      for (const p of [...(set ? set.payload.promises : []), ...researchPromises(date, mv ? mv.payload.move : 'shuttle')]) {
+        const byId = type => events.filter(e => e.type === type && e.payload.id === p.id).sort((x, y) => y.ts - x.ts)[0];
+        const st = byId('promise-start');
+        if (byId('promise-end')) continue;   // 끝낸 약속 — 남은 알림을 모두 지운다
+        want[p.id] = st ? { date, sig: 'started', alarms: () => quietAlarm(p, st.payload.at), click: `#promise/${p.id}` }
+          : { date, sig: `${p.date} ${p.start}-${p.end}`, alarms: () => promiseAlarms(p), click: `#promise/${p.id}` };
+      }
       if (dayType(date) && !mv && date > t) want[`move-${date}`] = { date, sig: 'move', alarms: () => moveAlarms(date), click: `#move/${date}` };
     }
     const saved = ls.get('promisePush') || {};
@@ -576,7 +586,7 @@ function syncPromisePush() {
 }
 
 // ============ 화면 그리기 ============
-const VIEWS = { '': '지금 무엇이 필요할까?', rest: '🌿 쉬기', start: '▶ 시작하기', paper: '📚 오늘의 논문', log: '🧺 정리하기', run: '지금 5분' };
+const VIEWS = { '': '지금 무엇이 필요할까?', rest: '🌿 쉬기', start: '▶ 시작하기', paper: '📚 오늘의 논문', log: '🧺 정리하기', run: '지금 5분', prun: '💚 약속' };
 const view = () => { const v = location.hash.replace('#', ''); return v in VIEWS ? v : ''; };
 
 async function renderSync() {
@@ -593,7 +603,7 @@ async function renderSync() {
 // 오늘 목표 = 스냅샷 목표 + 폰에서 바꾼 체크 상태 (PC가 아직 병합하지 않았어도 내가 누른 대로 보이게)
 // ⚡ 기록 탭 — 고른 탭의 접두어를 줄 앞에 붙여 quick 이벤트로 보낸다 (PC applyQuick이 접두어로 섹션을 고른다)
 const QUICK_TABS = {
-  한: { label: '한 일', ph: '연구 30', hint: '활동 이름과 분 (분은 빼도 돼요)' },
+  한: { label: '한 일', ph: '목록에 없는 것 — 연구 30', hint: '체크하고 분을 고르거나, 없는 건 적어요' },
   밥: { label: '밥', ph: '점심 김치찌개', hint: '끼니와 메뉴' },
   몸: { label: '몸', ph: '', hint: '누르고 남기기 — 바꾼 값만 저장돼요' },
   목표: { label: '목표', ph: '산책 20분', hint: '🎯 오늘 목표에 바로 추가돼요' },
@@ -603,6 +613,37 @@ const quickTab = () => (ls.get('quickTab') in QUICK_TABS ? ls.get('quickTab') : 
 function quickLines(text) {
   return String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
     .map(l => { const m = l.match(QUICK_RE); return m ? { kind: m[1], text: m[2].trim() } : { kind: '메모', text: l }; });
+}
+
+// ✅ 한 일 체크리스트 (앱 v20, 호호 "한 일 입력이 불편해") — 오늘 약속·자주 한 활동을 체크로 남긴다.
+// 체크 → 분 버튼 → did {act, min} · 체크 풀기 → did-undo {act} (PC가 같은 활동명의 마지막 줄을 지운다)
+const PROMISE_ACT = { log: '기록', gym: '운동', study: '공부', research: '논문' };
+const DID_MINS = [15, 30, 60, 90, 120];
+function didNow(date) {   // 스냅샷의 한 일 + PC가 아직 반영하지 않은 내 기록
+  const day = state.snap && state.snap.days && state.snap.days[date];
+  const list = ((day && day.did) || []).map(x => ({ ...x }));
+  for (const e of pendingEvents(['did', 'did-undo', 'quick']).filter(e => e.date === date)) {
+    if (e.type === 'did') list.push({ act: e.payload.act, min: e.payload.min || null });
+    else if (e.type === 'did-undo') { const i = list.map(x => x.act).lastIndexOf(e.payload.act); if (i >= 0) list.splice(i, 1); }
+    else for (const l of quickLines(e.payload.text)) if (l.kind === '한') {
+      const m = l.text.match(/^(.*\S)\s+(\d{1,4})$/); list.push(m ? { act: m[1], min: +m[2] } : { act: l.text, min: null });
+    }
+  }
+  return list;
+}
+function drawDidList() {
+  const el = $('#did-list');
+  el.hidden = quickTab() !== '한'; if (el.hidden) return;
+  const date = today(), done = didNow(date);
+  const fromPromises = [...((promiseSet(date) || {}).promises || []), ...researchPromises(date)].map(x => PROMISE_ACT[x.kind]).filter(Boolean);
+  const acts = [...new Set([...done.map(x => x.act), ...fromPromises, ...((state.snap && state.snap.acts) || [])])];
+  el.innerHTML = acts.map(act => {
+    const mine = done.filter(x => x.act === act), mins = mine.map(x => x.min).filter(Boolean);
+    return `<li class="${mine.length ? 'done' : ''}"><input type="checkbox" data-did="${esc(act)}" ${mine.length || state.didPick === act ? 'checked' : ''} aria-label="${esc(act)}">
+      <span>${esc(act)}${mins.length ? ` <span class="muted small">${mins.map(m => m + '분').join(' · ')}</span>` : ''}</span>
+      ${state.didPick === act ? `<div class="chips small-chips did-mins">${['', ...DID_MINS].map(m =>
+        `<button class="chip-btn" data-didmin="${m}" data-act-name="${esc(act)}">${m ? m + '분' : '분 없이'}</button>`).join('')}</div>` : ''}</li>`;
+  }).join('');
 }
 
 // 💪 몸 탭 — 입력할 값이 정해져 있어서 글 대신 버튼·숫자 칸으로 받고, 바뀐 값만 body 이벤트로 보낸다 (PC는 op set)
@@ -676,7 +717,7 @@ function draw() {
   $('#connect').hidden = state.connected;
   $('#keycard').hidden = !state.connected || (state.hasKey && !state.rekey);
   for (const k of Object.keys(VIEWS)) $('#v-' + (k || 'home')).hidden = k !== v;
-  ({ '': drawHome, rest: drawRest, start: drawStart, paper: drawReading, log: drawLog, run: drawRun })[v]();
+  ({ '': drawHome, rest: drawRest, start: drawStart, paper: drawReading, log: drawLog, run: drawRun, prun: drawPrun })[v]();
 
   const s = state.snap;
   const err = state.snapErr && state.snapErr !== '없음' ? ` · 요약 받기 실패: ${state.snapErr}` : '';
@@ -957,6 +998,94 @@ function drawRun() {
     <div class="row"><button class="btn" data-act="run-stop">여기까지</button><button class="btn primary" data-act="step-done" data-i="${i}">✓ 이 단계 끝</button></div>`;
 }
 
+// ----- 💚 약속 실행 — PRD tasks/prd-selfcare-promise-push.md US-006 -----
+// 알림(#promise/<id>)이나 약속 카드 ▶에서 연다 → 5초 카운트다운(v10 LAUNCH) → "하는 중" 화면. 시작만 센다:
+// 남은 시간·진행 막대·끝 알람이 없다(호호 2026-10-25). 시작 = promise-start, 끝 = promise-end 이벤트 →
+// syncPromisePush가 이걸 보고 남은 재촉 알림을 지우고, 조용한 알림 한 건(마감 또는 시작 90분 뒤 중 늦은 쪽)만 다시 건다.
+// prun = { id, phase: 'count' | 'doing', countAt, delays, useSmall, startedAt, praise }
+const getPrun = () => state.prun || ls.get('prun');
+const savePrun = r => { state.prun = r; ls.set('prun', r); };
+const hmOf = ms => { const d = new Date(ms); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+function findPromise(id) {
+  const date = String(id).slice(0, 10), set = promiseSet(date);
+  return (set && set.promises.find(x => x.id === id)) || researchPromises(date).find(x => x.id === id) || null;
+}
+const promiseEv = (type, id) => state.events.filter(e => e.type === type && e.payload.id === id).sort((a, b) => b.ts - a.ts)[0];
+async function openPromise(id) {
+  const evs = await idb.events();   // 알림으로 막 열렸으면 아직 기록을 안 읽었다 → 합친다
+  state.events = [...state.events.filter(e => !evs.some(x => x.id === e.id)), ...evs];
+  const p = findPromise(id);
+  if (!p) { toast('이 약속을 찾지 못했어요'); location.hash = ''; return; }
+  if (promiseEv('promise-end', id)) { toast('이미 끝낸 약속이에요 👏'); location.hash = ''; return; }
+  const cur = getPrun();
+  if (!(cur && cur.id === id)) {
+    const st = promiseEv('promise-start', id);
+    savePrun(st ? { id, phase: 'doing', startedAt: st.payload.at, delays: 0 } : { id, phase: 'count', countAt: Date.now() + LAUNCH.count * 1000, delays: 0, useSmall: false });
+  }
+  location.hash = '#prun';
+}
+// #promise/<id>(알림) · #move/<날짜>(셔틀/차 알림 — 처음 화면 카드에 칩이 있다)
+function routeHash() {
+  const h = decodeURIComponent(location.hash.replace('#', ''));
+  if (h.startsWith('promise/')) { openPromise(h.slice(8)); return true; }
+  if (h.startsWith('move/')) { location.hash = ''; return true; }
+  return false;
+}
+async function startPrun() {
+  const r = getPrun(); if (!r || r.phase !== 'count') return;
+  const at = Date.now();
+  savePrun({ ...r, phase: 'doing', startedAt: at, praise: pick(r.delays ? PRAISE.late : PRAISE.quick) });
+  rewardFx(); drawPrun();
+  await record('promise-start', { id: r.id, at, small: !!r.useSmall });
+  syncPromisePush();
+}
+async function endPrun() {
+  const r = getPrun(); if (!r) return;
+  await record('promise-end', { id: r.id, at: Date.now() });
+  savePrun(null); toast('💚 약속 지켰어요!'); buzz(80); location.hash = '';
+  syncPromisePush();
+}
+function drawPrun() {
+  const r = getPrun(), box = $('#prun'), p = r && findPromise(r.id);
+  if (!p) { box.innerHTML = '<p class="muted">진행 중인 약속이 없어요.</p><a class="btn" href="#">처음으로</a>'; return; }
+  const k = kindOf(p.kind) || { name: '약속', emoji: '💚' };
+  const first = (k.first && k.first.text) || p.firstStep, small = (k.small && k.small.text) || p.small;
+  const head = `<div class="muted small">${esc(k.emoji)} ${esc(k.name)} · ${p.start}~${p.end}</div>
+    <div class="run-step">${r.useSmall ? '작게: ' : '첫 동작: '}${esc((r.useSmall ? small : first) || '시작하기')}</div>`;
+  if (r.phase === 'count') {
+    const nudge = r.delays >= LAUNCH.nudgeAfter - 1;
+    box.innerHTML = `${head}
+      <div class="count" id="pcount">${Math.max(1, Math.ceil((r.countAt - Date.now()) / 1000))}</div>
+      <p class="muted small center">0이 되면 시작이에요</p>
+      <div class="row"><button class="btn" data-act="pcount-delay">⏳ ${LAUNCH.delaySec}초 미루기</button><button class="btn primary" data-act="pcount-go">지금 바로</button></div>
+      ${small && !r.useSmall ? `<button class="${nudge ? 'btn soft wide' : 'link'} mt" data-act="pcount-small">작게 할래요 · ${esc(small)}</button>` : ''}`;
+    return;
+  }
+  const since = Date.now() - (r.startedAt || 0), steps = k.steps || [];
+  box.innerHTML = `${head}
+    ${r.praise && since < 2500 ? `<div class="praise" style="animation-delay:-${since}ms">${esc(r.praise)}</div>` : ''}
+    <p class="muted">${hmOf(r.startedAt)} 시작 · 하는 중</p>
+    ${steps.length ? `<details class="p-steps"><summary>단계 보기</summary><ol>${steps.map(x => `<li>${esc(x.text)}${x.min ? ` <span class="muted small">${x.min}분</span>` : ''}</li>`).join('')}</ol></details>` : ''}
+    <button class="btn primary wide big mt" data-act="prun-end">✅ 종료했어요</button>
+    <button class="link mt" data-act="prun-leave">처음 화면으로 (하는 중으로 둘게요)</button>`;
+}
+// 처음 화면 — 하는 중인 약속 한 줄, 지금 창이 열린 약속 ▶
+function prunBanner() {
+  const r = getPrun(), p = r && r.phase === 'doing' && findPromise(r.id); if (!p) return '';
+  const k = kindOf(p.kind) || { name: '약속', emoji: '💚' };
+  return `<section class="card promise folded"><div class="next-head"><span>${esc(k.emoji)} ${esc(k.name)} 하는 중 · ${hmOf(r.startedAt)} 시작</span>
+    <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></div></section>`;
+}
+function promiseGoBtn(date) {
+  if (date !== today()) return '';
+  const now = nowDayMin(), r = getPrun();
+  const p = [...((promiseSet(date) || {}).promises || []), ...researchPromises(date)]
+    .find(x => hmMin(x.start) <= now && now < hmMin(x.end) && !promiseEv('promise-end', x.id) && !promiseEv('promise-start', x.id) && !(r && r.id === x.id));
+  if (!p) return '';
+  const k = kindOf(p.kind) || { name: '약속', emoji: '💚' };
+  return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${esc(k.emoji)} ${esc(k.name)} 지금 시작</button>`;
+}
+
 // 1초보다 잘게 도는 시계 하나가 두 타이머(실행·쉼)를 함께 돌린다 — 어느 화면에 있든 끝나면 울린다
 function clock() {
   const now = Date.now();
@@ -978,6 +1107,17 @@ function clock() {
     } else if (run.endAt) {
       if (now < run.endAt) { active = true; const el = $('#timer'); if (el) el.textContent = fmt(run.endAt - now); }
       else if (!run.rang) { saveRun({ ...run, rang: true }); if (now - run.endAt <= LATE_MS) alarm(); redraw('run'); }
+    }
+  }
+  const pr = getPrun();
+  if (pr && pr.phase === 'count' && view() === 'prun') {
+    active = true;
+    if (now >= pr.countAt) {
+      if (now - pr.countAt > LATE_MS) { savePrun({ ...pr, countAt: now + LAUNCH.count * 1000 }); drawPrun(); }   // 떠났다 왔으면 다시 센다
+      else startPrun();
+    } else {
+      const el = $('#pcount'), n = String(Math.ceil((pr.countAt - now) / 1000));
+      if (el && el.textContent !== n) { el.textContent = n; countFx(); }
     }
   }
   const r = ls.get('resting');
@@ -1007,6 +1147,7 @@ function drawLog() {
   $('#quick').hidden = tab === '몸';
   $('#body-form').hidden = tab !== '몸';
   if (tab === '몸') { readBodyInputs(); drawBodyForm(); }
+  drawDidList();
   const li = (e, kind, text) => `<li><span>${esc(e.hm)}</span><span class="badge">${esc(kind)}</span><b>${esc(text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`;
   $('#log').innerHTML = state.events.filter(e => (e.type === 'quick' || e.type === 'body') && e.date === today()).sort((a, b) => b.ts - a.ts)
     .flatMap(e => e.type === 'body' ? [li(e, '몸', bodyText(e.payload))] : quickLines(e.payload.text).map(l => li(e, l.kind === '한' ? '한 일' : l.kind, l.text))).join('');
@@ -1027,7 +1168,7 @@ const openFlow = t => {
     steps: t.steps.length ? t.steps.map(s => ({ ...s })) : buildSteps(t.kind || guessKind(t.title), '', 'phone'), edited: false };
 };
 $('#btn-back').onclick = () => { location.hash = ''; };
-window.addEventListener('hashchange', () => { window.scrollTo(0, 0); draw(); });
+window.addEventListener('hashchange', () => { if (routeHash()) return; window.scrollTo(0, 0); draw(); });
 
 $('#main').addEventListener('click', async e => {
   const b = e.target.closest('button, a'); if (!b) return;
@@ -1050,6 +1191,19 @@ $('#main').addEventListener('click', async e => {
     else if (d.pon !== undefined) r.off = false;
     else { const [, s, e] = CARE_CHIPS[+d.k]; r.start = s; r.end = e; }
     drawPromises(); return;
+  }
+  if (d.act === 'promise-go') { openPromise(d.id); return; }
+  if (d.act === 'pcount-go') { startPrun(); return; }
+  if (d.act === 'pcount-delay') {
+    const r = getPrun(); savePrun({ ...r, countAt: Date.now() + LAUNCH.delaySec * 1000, delays: (r.delays || 0) + 1 }); drawPrun(); return;
+  }
+  if (d.act === 'pcount-small') { const r = getPrun(); savePrun({ ...r, useSmall: true, countAt: Date.now() + LAUNCH.count * 1000 }); drawPrun(); return; }
+  if (d.act === 'prun-end') { await endPrun(); return; }
+  if (d.act === 'prun-leave') { location.hash = ''; return; }
+  if (d.didmin !== undefined) {
+    const act = d.actName; state.didPick = null;
+    await record('did', { act, min: d.didmin ? +d.didmin : null });
+    toast(`✓ ${act}${d.didmin ? ` ${d.didmin}분` : ''}`); return;
   }
   if (d.pmove) {
     if (moveOf(d.pd) === d.pmove && moveChosen(d.pd)) return;
@@ -1189,6 +1343,12 @@ $('#btn-dump').onclick = async () => {
   for (const title of lines) { const tid = newTid(); state.dumpIds.push(tid); await record('task-add', { tid, title, kind: guessKind(title) }); }
   $('#dump').value = ''; toast(`${lines.length}개를 옮겼어요. 하나씩 골라 보세요`);
 };
+$('#did-list').onchange = async e => {
+  const act = e.target.dataset.did; if (act == null) return;
+  if (e.target.checked) { state.didPick = act; drawDidList(); return; }   // 분을 고르면 그때 남긴다
+  if (state.didPick === act) { state.didPick = null; drawDidList(); return; }
+  await record('did-undo', { act }); toast(`${act} 체크를 풀었어요`);
+};
 $('#goals').onchange = async e => {
   const i = +e.target.dataset.i;
   const g = goalsFor(today())[i];
@@ -1283,7 +1443,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
       state.run = q.get('phase') === 'run' ? { tid: q.get('run'), phase: 'run', endAt: now + runMs(), startedAt: now, praise: PRAISE.quick[0], delays, delaysTotal: delays }
         : { tid: q.get('run'), phase: 'count', countAt: now + LAUNCH.count * 1000, delays, delaysTotal: delays };
     }
-    draw(); return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
+    if (!routeHash()) draw(); return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
   }
   const justLoggedIn = await dbx.finishLogin();
   state.connected = !!(await idb.get('auth'));
@@ -1295,4 +1455,5 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
   flush();
   prune();
   syncPromisePush();   // 꺼져 있던 동안 못 건 약속 푸시를 건다
+  routeHash();         // 알림을 눌러 열렸으면 그 약속으로
 })();

@@ -198,3 +198,16 @@ dialog h3 { margin: 14px 0 8px; }
 .p-day { margin: 8px 0 10px; }
 .p-day .p-dayinfo { margin: 6px 0 0; font-weight: 600; }
 .p-day .muted { margin: 2px 0 0; }
+
+/* v20 — 약속 실행 · 한 일 체크리스트 */
+.btn.wide { display: block; width: 100%; text-align: center; }
+.btn.big { font-size: 18px; padding: 15px 14px; }
+.p-go { margin-top: 10px; }
+.p-steps { margin: 10px 0 0; }
+.p-steps summary { cursor: pointer; color: var(--blue); font-size: 14px; }
+.p-steps ol { margin: 8px 0 0; padding-left: 20px; line-height: 1.7; }
+.did-list { margin: 4px 0 10px; }
+.did-list li { flex-wrap: wrap; }
+.did-list .did-mins { flex-basis: 100%; padding-left: 30px; margin-top: 2px; }
+.did-list li.done span { text-decoration: none; color: var(--ink); }
+.did-list li.done > span { font-weight: 600; }
