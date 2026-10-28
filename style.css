@@ -194,4 +194,7 @@ dialog h3 { margin: 14px 0 8px; }
 .p-ok { flex: 1; }
 .p-ok.btn.primary { background: var(--promise); border-color: var(--promise); }
 
-.promise .p-off { margin: 6px 0 0; color: var(--orange); }
+.promise .p-pushoff { margin: 6px 0 0; color: var(--orange); }
+.p-day { margin: 8px 0 10px; }
+.p-day .p-dayinfo { margin: 6px 0 0; font-weight: 600; }
+.p-day .muted { margin: 2px 0 0; }

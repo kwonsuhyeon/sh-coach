@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v18';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v19';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -395,7 +395,35 @@ const minHm = m => `${p2(Math.floor(m / 60))}:${p2(m % 60)}`;
 const PROMISE = { stepMin: 30, eveningH: 21, firstMin: 5 * 60, lastMin: 23 * 60 + 30 };
 const CARE_CHIPS = [['점심 뒤', '13:00', '14:00'], ['퇴근 길', '18:00', '19:00'], ['저녁', '19:30', '21:00'], ['자기 전', '22:00', '23:00']];
 const selfcare = () => (state.snap && state.snap.selfcare) || [];
-const kindOf = id => selfcare().find(c => c.id === id);
+const kindOf = id => (/^research\d*$/.test(id) ? researchKind() : selfcare().find(c => c.id === id));
+
+// ============ 🏫 학교 날 — PRD: tasks/prd-school-day-rhythm.md US-101~103 ============
+// 날 종류는 PC wiki/coach/daytypes.md(요약 daytypes). 학교 가는 요일에는 [🚌 셔틀] [🚗 차]를 묻고 기본은 셔틀(호호 결정 2026-10-28).
+// 셔틀이면 그 요일의 연구 블록을 📄 약속으로 깔고 확정하지 않아도 알림을 건다. 차면 회복 날 — 연구를 안 해도 아무 표시도 없다.
+// 연구 블록은 promise-set에 넣지 않는다(셔틀/차만으로 정해진다). 시간을 바꾸려면 daytypes.md를 고친다.
+const daytypes = () => (state.snap && state.snap.daytypes) || null;
+const dayType = date => { const dt = daytypes(); return (dt && dt.days && dt.days[wdOf(date)]) || null; };   // 학교 가는 요일만
+const researchKind = () => ({ id: 'research', name: '논문 읽기', emoji: '📄', ...((daytypes() || {}).research || {}) });
+function moveOf(date) {
+  const ev = state.events.filter(e => e.type === 'day-move' && e.payload.date === date).sort((a, b) => b.ts - a.ts)[0];
+  return ev ? ev.payload.move : 'shuttle';
+}
+const moveChosen = date => state.events.some(e => e.type === 'day-move' && e.payload.date === date);
+function researchPromises(date, move = moveOf(date)) {
+  const dt = dayType(date); if (!dt || move !== 'shuttle') return [];
+  const k = researchKind();
+  return (dt.blocks || []).map((b, i) => ({ id: `${date}-research${i ? i + 1 : ''}`, kind: 'research', date, start: b.start, end: b.end,
+    firstStep: (k.first && k.first.text) || '', small: (k.small && k.small.text) || '' }));
+}
+function dayBar(date) {
+  const dt = dayType(date); if (!dt) return '';
+  const mv = moveOf(date), cd = (daytypes() || {}).car || { name: '회복 날', emoji: '🌙', success: '다녀오기 + 쉼 하나' }, k = researchKind();
+  const info = mv === 'car' ? `${cd.emoji} ${cd.name} · ${cd.success}` : `${dt.emoji} ${dt.name}${dt.success ? ` · 성공: ${dt.success}` : ''}`;
+  const blocks = researchPromises(date).map(p => `${k.emoji} ${k.name} ${p.start}~${p.end}`).join(' · ');
+  return `<div class="p-day"><div class="chips small-chips">${[['shuttle', '🚌 셔틀'], ['car', '🚗 차']].map(([m, l]) =>
+    `<button class="chip-btn ${mv === m ? 'on' : ''}" data-pmove="${m}" data-pd="${date}">${l}</button>`).join('')}</div>
+    <p class="small p-dayinfo">${esc(info)}</p>${blocks ? `<p class="muted small">${esc(blocks)}</p>` : ''}</div>`;
+}
 const wdOf = date => new Date(date + 'T12:00:00').getDay();
 const isEvening = () => { if (state.demoEve) return true; const h = new Date().getHours(); return h >= PROMISE.eveningH || h < C.DAY_CUTOFF_H; };
 const nowDayMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + (d.getHours() < C.DAY_CUTOFF_H ? 1440 : 0); };   // 새벽은 어제의 연장
@@ -421,12 +449,12 @@ function timeOptions(cur) {
   return list.map(t => `<option ${t === cur ? 'selected' : ''}>${t}</option>`).join('');
 }
 // 주제 이름이 없으면 약속 알림이 하나도 안 걸린다 → 확정한 카드에 늘 보이게 (2026-10-28 폰 저장소가 비어 알림이 안 왔다)
-const pushOffNote = () => (push.topic() ? '' : `<p class="small p-off">🔕 폰 알림이 꺼져 있어요 · <button class="link small" data-act="open-settings">설정에서 ntfy 주제 넣기</button></p>`);
+const pushOffNote = () => (push.topic() ? '' : `<p class="small p-pushoff">🔕 폰 알림이 꺼져 있어요 · <button class="link small" data-act="open-settings">설정에서 ntfy 주제 넣기</button></p>`);
 function promiseCard(date) {
   const label = date === today() ? '오늘' : '내일';
   const set = promiseSet(date);
   if (set && state.pedit !== date) {
-    const ps = [...set.promises].sort((a, b) => a.start.localeCompare(b.start));
+    const ps = [...set.promises, ...researchPromises(date)].sort((a, b) => a.start.localeCompare(b.start));
     const emo = p => (kindOf(p.kind) || {}).emoji || '💚';
     let line = ps.length ? `💚 ${label === '오늘' ? '' : '내일 '}약속 ${ps.length}개` : `💚 ${label}은 약속 없이 가요`;
     if (ps.length && label === '내일') line += ` · 첫 ${emo(ps[0])} ${ps[0].start}`;
@@ -435,10 +463,10 @@ function promiseCard(date) {
       line += cur ? ` · 지금 ${emo(cur)} ~${cur.end}` : nx ? ` · 다음 ${emo(nx)} ${nx.start}` : ' · 오늘 창은 모두 지났어요';
     }
     return `<section class="card promise folded"><div class="next-head"><span>${esc(line)}</span>
-      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${ps.length ? pushOffNote() : ''}</section>`;
+      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${dayBar(date)}${ps.length ? pushOffNote() : ''}</section>`;
   }
   const d = promiseDraft(date);
-  if (!d.rows.length) return '';
+  if (!d.rows.length) return dayType(date) ? `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${researchPromises(date).length ? pushOffNote() : ''}</section>` : '';
   const on = d.rows.map((r, i) => [r, i]).filter(([r]) => !r.off), off = d.rows.map((r, i) => [r, i]).filter(([r]) => r.off);
   const row = ([r, i]) => {
     const c = kindOf(r.kind) || { name: r.kind, emoji: '💚' };
@@ -452,7 +480,7 @@ function promiseCard(date) {
         <select class="field" data-pend="${i}" data-pd="${date}" aria-label="끝">${timeOptions(r.end)}</select></div>` : ''}
       <div class="p-sub"><span class="muted small">${esc(step)}</span><button class="link small" data-poff="${i}" data-pd="${date}">${label}은 빼기</button></div></div>`;
   };
-  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>
+  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}
     ${on.length ? on.map(row).join('') : `<p class="muted small">${label}은 약속 없이 가도 괜찮아요.</p>`}
     ${off.length ? `<p class="muted small p-off">뺀 것: ${off.map(([r, i]) => `<button class="link small" data-pon="${i}" data-pd="${date}">${esc((kindOf(r.kind) || {}).emoji || '')} ${esc((kindOf(r.kind) || {}).name || r.kind)} 다시 넣기</button>`).join(' · ')}</p>` : ''}
     <div class="row ${state.pedit === date ? 'two' : ''}">${state.pedit === date ? `<button class="btn" data-act="promise-cancel" data-date="${date}">그대로 두기</button>` : ''}
@@ -461,11 +489,11 @@ function promiseCard(date) {
 // 처음 화면 맨 위 — 낮에는 오늘 카드, 21시 뒤에는 (오늘 약속 한 줄 +) 내일 카드
 function drawPromises() {
   const box = $('#promise-box');
-  if (!selfcare().length) { box.innerHTML = ''; return; }
+  if (!selfcare().length && !daytypes()) { box.innerHTML = ''; return; }
   const t = today();
   box.innerHTML = isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t);
 }
-const promiseHomeKey = () => (selfcare().length ? $('#promise-box').textContent.replace(/\s+/g, '') : '');   // clock()이 15초마다 바뀌었는지 본다
+const promiseHomeKey = () => (selfcare().length || daytypes() ? $('#promise-box').textContent.replace(/\s+/g, '') : '');   // clock()이 15초마다 바뀌었는지 본다
 async function confirmPromises(date) {
   const d = promiseDraft(date), rows = d.rows.filter(r => !r.off);
   const miss = rows.find(r => !r.start);
@@ -486,6 +514,7 @@ async function confirmPromises(date) {
 // 확정한 약속과 맞춰 보는 방식(reconcile)이라 시간을 바꾸거나 빼면 옛 예약을 지우고 다시 건다.
 // 오프라인이거나 보내기에 실패하면 저장하지 않고 두었다가 online·앱 열림 때 다시 맞춘다. 지난 시각은 걸지 않는다.
 const PUSH_LEAD_MS = 15 * 1000;   // ntfy 예약은 최소 10초 뒤부터 받는다
+const PUSH_MAX_MS = 71 * 3600 * 1000;   // ntfy 예약은 최대 3일 뒤까지 — 앱을 열 때마다 앞으로 3일 치를 다시 맞춘다
 function promiseAlarms(p) {
   const c = kindOf(p.kind) || {}, emo = c.emoji || '💚', name = c.name || '약속';
   const at = hm => new Date(`${p.date}T${hm}:00`).getTime();
@@ -496,7 +525,16 @@ function promiseAlarms(p) {
   if (win >= 60) list.push({ t: s + (e - s) / 2, priority: 3, title: `${emo} ${name} · ${p.end}까지`, message: `첫 동작: ${first}${fMin}` });
   list.push({ t: e - 30 * 60000, priority: 4, title: `${emo} ${name} · 30분 남았어요`, message: `작게: ${small}${sMin}` });
   list.push({ t: e - 10 * 60000, priority: 5, title: `${emo} ${name} · 10분 남았어요`, message: `작게: ${small}${sMin}` });
-  return list.filter((a, i) => (i === 0 || a.t > s) && a.t > Date.now() + PUSH_LEAD_MS);
+  // 창이 짧으면 중간·30분 전이 겹친다(60분 창은 둘 다 30분 지점) → 10분 안에 뒤 알림이 있으면 앞 것을 뺀다
+  return list.filter((a, i) => (i === 0 || a.t > s) && !list.slice(i + 1).some(b => b.t - a.t < 10 * 60000)
+    && a.t > Date.now() + PUSH_LEAD_MS && a.t < Date.now() + PUSH_MAX_MS);
+}
+// US-103: 다음 날이 학교 가는 요일이고 아직 셔틀/차를 안 골랐으면 그 전날 밤 23:00에 한 번 묻는다. 안 고르면 셔틀 그대로
+const MOVE_ASK_HM = '23:00';
+function moveAlarms(date) {   // date = 학교 가는 날
+  const dt = dayType(date), t = new Date(`${addDaysStr(date, -1)}T${MOVE_ASK_HM}:00`).getTime();
+  if (t <= Date.now() + PUSH_LEAD_MS || t >= Date.now() + PUSH_MAX_MS) return [];
+  return [{ t, priority: 3, title: '🚌 내일은 셔틀 기본이에요', message: `차 탈 거면 눌러서 바꿔 주세요 · 내일 ${dt.emoji} ${dt.name}`, tags: ['bus'] }];
 }
 let pushSyncing = null;
 function syncPromisePush() {
@@ -504,28 +542,34 @@ function syncPromisePush() {
   return (pushSyncing = (async () => {
     if (!push.topic() || !navigator.onLine || state.demo) return;
     const t = today(), events = await idb.events();
-    const latest = {};   // 날짜별 가장 최근 promise-set
-    for (const e of events) if (e.type === 'promise-set' && e.payload.date >= t && (!latest[e.payload.date] || e.ts > latest[e.payload.date].ts)) latest[e.payload.date] = e;
-    const want = {};
-    for (const e of Object.values(latest)) for (const p of e.payload.promises) want[p.id] = p;
+    // want = { 예약id: { date, sig, alarms, click } } — 약속(오늘~사흘 뒤 promise-set) + 셔틀 날 연구 블록 + 전날 밤 셔틀/차 알림
+    const want = {}, last = (type, date) => events.filter(e => e.type === type && e.payload.date === date).sort((x, y) => y.ts - x.ts)[0];
+    for (const date of [0, 1, 2, 3].map(n => addDaysStr(t, n))) {
+      const set = last('promise-set', date), mv = last('day-move', date);
+      for (const p of [...(set ? set.payload.promises : []), ...researchPromises(date, mv ? mv.payload.move : 'shuttle')])
+        want[p.id] = { date, sig: `${p.date} ${p.start}-${p.end}`, alarms: () => promiseAlarms(p), click: `#promise/${p.id}` };
+      if (dayType(date) && !mv && date > t) want[`move-${date}`] = { date, sig: 'move', alarms: () => moveAlarms(date), click: `#move/${date}` };
+    }
     const saved = ls.get('promisePush') || {};
     for (const id of Object.keys(saved)) {
-      const p = want[id];
-      if (p && saved[id].sig === `${p.date} ${p.start}-${p.end}`) continue;
-      if (!p && id.slice(0, 10) < t) { delete saved[id]; continue; }   // 지난 날 약속은 ntfy가 이미 보냈다
+      const w = want[id];
+      if (w && saved[id].sig === w.sig) continue;
+      if (!w && (saved[id].date || id.slice(0, 10)) < t) { delete saved[id]; continue; }   // 지난 날 알림은 ntfy가 이미 보냈다
       for (const mid of saved[id].ids) await push.cancel(mid);
       delete saved[id]; ls.set('promisePush', saved);
     }
-    for (const p of Object.values(want)) {
-      if (saved[p.id]) continue;
+    for (const [id, w] of Object.entries(want)) {
+      if (saved[id]) continue;
+      const alarms = w.alarms();
+      if (!alarms.length) continue;   // 다 지났거나 아직 3일 밖 — 다음에 열 때 다시 본다
       const ids = [];
       try {
-        for (const a of promiseAlarms(p)) ids.push(await push.send({ title: a.title, message: a.message, at: a.t, priority: a.priority, tags: ['green_heart'], click: `${NTFY.click}#promise/${p.id}` }));
+        for (const x of alarms) ids.push(await push.send({ title: x.title, message: x.message, at: x.t, priority: x.priority, tags: x.tags || ['green_heart'], click: NTFY.click + w.click }));
       } catch (err) {
         for (const mid of ids) await push.cancel(mid);   // 반쯤 걸린 예약은 지우고 다음에 통째로 다시
         console.warn('약속 푸시 예약 실패', err); return;
       }
-      saved[p.id] = { sig: `${p.date} ${p.start}-${p.end}`, ids }; ls.set('promisePush', saved);
+      saved[id] = { date: w.date, sig: w.sig, ids }; ls.set('promisePush', saved);
     }
     ls.set('promisePush', saved);
   })().finally(() => { pushSyncing = null; }));
@@ -1006,6 +1050,12 @@ $('#main').addEventListener('click', async e => {
     else if (d.pon !== undefined) r.off = false;
     else { const [, s, e] = CARE_CHIPS[+d.k]; r.start = s; r.end = e; }
     drawPromises(); return;
+  }
+  if (d.pmove) {
+    if (moveOf(d.pd) === d.pmove && moveChosen(d.pd)) return;
+    await record('day-move', { date: d.pd, move: d.pmove });
+    toast(d.pmove === 'car' ? '🌙 회복 날로 바꿨어요. 연구 알림은 뺐어요' : '🚌 셔틀 날이에요. 연구 블록 알림을 걸었어요');
+    syncPromisePush(); return;
   }
   if (d.act === 'promise-ok') { await confirmPromises(d.date); return; }
   if (d.act === 'open-settings') { $('#btn-settings').click(); return; }   // record → render → 접힌 한 줄
