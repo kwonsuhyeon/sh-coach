@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v20';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v21';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -491,7 +491,7 @@ function drawPromises() {
   const box = $('#promise-box');
   if (!selfcare().length && !daytypes()) { box.innerHTML = ''; return; }
   const t = today();
-  box.innerHTML = prunBanner() + (isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t));
+  box.innerHTML = prunBanner() + stepsLine() + (isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t));
 }
 const promiseHomeKey = () => (selfcare().length || daytypes() ? $('#promise-box').textContent.replace(/\s+/g, '') : '');   // clock()이 15초마다 바뀌었는지 본다
 async function confirmPromises(date) {
@@ -1039,11 +1039,50 @@ async function startPrun() {
   await record('promise-start', { id: r.id, at, small: !!r.useSmall });
   syncPromisePush();
 }
-async function endPrun() {
+async function endPrun(skipStep) {
   const r = getPrun(); if (!r) return;
+  const p = findPromise(r.id);
+  if (!skipStep && p && p.kind === 'research' && r.phase !== 'step') { savePrun({ ...r, phase: 'step' }); drawPrun(); return; }   // US-104
   await record('promise-end', { id: r.id, at: Date.now() });
-  savePrun(null); toast('💚 약속 지켰어요!'); buzz(80); location.hash = '';
+  savePrun(null); stampFx(p); location.hash = '';
   syncPromisePush();
+}
+// 💮 도장 — 인증 사진 대신(호호 2026-10-28 "도장 찍는 듯한 스티커 효과면 돼"). 화면 가운데 쾅 찍히고 1.8초 뒤 사라진다
+function stampFx(p) {
+  const el = $('#stamp'), k = (p && kindOf(p.kind)) || { emoji: '💚' }, d = logicalNow();
+  $('#stamp-sub').textContent = `${k.emoji || '💚'} ${d.getMonth() + 1}.${d.getDate()}`;
+  el.hidden = false; el.classList.remove('on'); void el.offsetWidth; el.classList.add('on');
+  chime([[523, 0, 0.08], [784, 0.1, 0.3]]); buzz([30, 40, 140]);
+  clearTimeout(stampFx.t); stampFx.t = setTimeout(() => { el.hidden = true; el.classList.remove('on'); }, 1900);
+}
+// 📄 박사 한 걸음 — PRD tasks/prd-school-day-rhythm.md US-104. 이번 주 = 요약 steps(PC 반영분) + 아직 안 올라간 research-step
+const mondayOf = date => addDaysStr(date, -((wdOf(date) + 6) % 7));
+function weekSteps() {
+  const mon = mondayOf(today());
+  const split = t => { const i = t.indexOf(' — '); return i < 0 ? { title: t, line: '' } : { title: t.slice(0, i), line: t.slice(i + 3) }; };
+  const list = ((state.snap && state.snap.steps) || []).filter(x => x.date >= mon).map(x => ({ date: x.date, ...split(x.text) }));
+  for (const e of pendingEvents(['research-step']).filter(e => e.date >= mon))
+    list.push({ date: e.date, title: e.payload.title || '(제목 없이)', line: e.payload.line || '' });
+  return list;
+}
+function stepsLine() {
+  const st = weekSteps(); if (!st.length) return '';
+  const papers = new Set(st.map(x => x.title).filter(t => t && t !== '(제목 없이)')).size;
+  return `<p class="small p-steps-line">📄 이번 주 박사 한 걸음 ${st.length}개${papers ? ` · 논문 ${papers}편` : ''}</p>`;
+}
+function readStepInputs() {
+  const r = getPrun(), t = $('#step-title'), l = $('#step-line'); if (!r || !t) return r;
+  const nr = { ...r, otherTitle: t.value, line: l.value }; savePrun(nr); return nr;
+}
+async function saveStep() {
+  const r = readStepInputs(); if (!r) return;
+  const papers = (state.snap && state.snap.reading && state.snap.reading.papers) || [];
+  const picked = papers.find(x => x.id === r.paper);
+  const title = (picked ? picked.title : (r.otherTitle || '')).trim(), line = (r.line || '').trim();
+  if (title || line) await record('research-step', { date: today(), paperId: picked ? picked.id : null, title, line });
+  // 오늘의 논문을 골랐으면 papers-wiki 읽음 체크도 같이 (오늘의 논문 카드의 [읽었어요]와 같은 이벤트)
+  if (picked && papers[0] && picked.id === papers[0].id && !(state.snap.reading.readToday || todays('reading-done').length)) await record('reading-done', { id: picked.id });
+  await endPrun(true);
 }
 function drawPrun() {
   const r = getPrun(), box = $('#prun'), p = r && findPromise(r.id);
@@ -1052,6 +1091,17 @@ function drawPrun() {
   const first = (k.first && k.first.text) || p.firstStep, small = (k.small && k.small.text) || p.small;
   const head = `<div class="muted small">${esc(k.emoji)} ${esc(k.name)} · ${p.start}~${p.end}</div>
     <div class="run-step">${r.useSmall ? '작게: ' : '첫 동작: '}${esc((r.useSmall ? small : first) || '시작하기')}</div>`;
+  if (r.phase === 'step') {
+    const papers = (state.snap && state.snap.reading && state.snap.reading.papers) || [];
+    const short = t => (t.length > 28 ? t.slice(0, 27) + '…' : t);
+    box.innerHTML = `<div class="muted small">📄 박사 한 걸음 · 비워도 돼요</div>
+      <div class="run-step">오늘 읽은 논문</div>
+      ${papers.length ? `<div class="chips small-chips">${papers.map(x => `<button class="chip-btn ${r.paper === x.id ? 'on' : ''}" data-steppaper="${esc(x.id)}">${esc(short(x.title || ''))}</button>`).join('')}</div>` : ''}
+      ${r.paper ? '' : `<input class="field mt" id="step-title" placeholder="${papers.length ? '다른 논문이면 제목' : '읽은 논문 제목'}" value="${esc(r.otherTitle || '')}">`}
+      <textarea class="mt" id="step-line" rows="2" placeholder="알게 된 것 한 줄">${esc(r.line || '')}</textarea>
+      <div class="row mt"><button class="btn" data-act="step-skip">건너뛰기</button><button class="btn primary" data-act="step-save">남기기</button></div>`;
+    return;
+  }
   if (r.phase === 'count') {
     const nudge = r.delays >= LAUNCH.nudgeAfter - 1;
     box.innerHTML = `${head}
@@ -1071,7 +1121,7 @@ function drawPrun() {
 }
 // 처음 화면 — 하는 중인 약속 한 줄, 지금 창이 열린 약속 ▶
 function prunBanner() {
-  const r = getPrun(), p = r && r.phase === 'doing' && findPromise(r.id); if (!p) return '';
+  const r = getPrun(), p = r && (r.phase === 'doing' || r.phase === 'step') && findPromise(r.id); if (!p) return '';
   const k = kindOf(p.kind) || { name: '약속', emoji: '💚' };
   return `<section class="card promise folded"><div class="next-head"><span>${esc(k.emoji)} ${esc(k.name)} 하는 중 · ${hmOf(r.startedAt)} 시작</span>
     <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></div></section>`;
@@ -1148,6 +1198,9 @@ function drawLog() {
   $('#body-form').hidden = tab !== '몸';
   if (tab === '몸') { readBodyInputs(); drawBodyForm(); }
   drawDidList();
+  const st = weekSteps().sort((a, b) => b.date.localeCompare(a.date));
+  $('#steps-card').hidden = !st.length;
+  $('#steps-list').innerHTML = st.map(x => `<li><span>${esc(x.date.slice(5).replace('-', '.'))}</span><b>${esc(x.title)}${x.line ? ` <span class="muted small">— ${esc(x.line)}</span>` : ''}</b></li>`).join('');
   const li = (e, kind, text) => `<li><span>${esc(e.hm)}</span><span class="badge">${esc(kind)}</span><b>${esc(text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`;
   $('#log').innerHTML = state.events.filter(e => (e.type === 'quick' || e.type === 'body') && e.date === today()).sort((a, b) => b.ts - a.ts)
     .flatMap(e => e.type === 'body' ? [li(e, '몸', bodyText(e.payload))] : quickLines(e.payload.text).map(l => li(e, l.kind === '한' ? '한 일' : l.kind, l.text))).join('');
@@ -1199,6 +1252,9 @@ $('#main').addEventListener('click', async e => {
   }
   if (d.act === 'pcount-small') { const r = getPrun(); savePrun({ ...r, useSmall: true, countAt: Date.now() + LAUNCH.count * 1000 }); drawPrun(); return; }
   if (d.act === 'prun-end') { await endPrun(); return; }
+  if (d.steppaper !== undefined) { const r = readStepInputs(); savePrun({ ...r, paper: r.paper === d.steppaper ? null : d.steppaper }); drawPrun(); return; }
+  if (d.act === 'step-save') { await saveStep(); return; }
+  if (d.act === 'step-skip') { await endPrun(true); return; }
   if (d.act === 'prun-leave') { location.hash = ''; return; }
   if (d.didmin !== undefined) {
     const act = d.actName; state.didPick = null;

@@ -9,6 +9,7 @@
   --orange: #eb6834;
   --orange-soft: #fdeee7;
   --ok: #2f8f5b;
+  --stamp: #d6453d;
   --radius: 14px;
   --gutter: 16px;
 }
@@ -211,3 +212,16 @@ dialog h3 { margin: 14px 0 8px; }
 .did-list .did-mins { flex-basis: 100%; padding-left: 30px; margin-top: 2px; }
 .did-list li.done span { text-decoration: none; color: var(--ink); }
 .did-list li.done > span { font-weight: 600; }
+
+/* v21 — 💮 도장 · 📄 박사 한 걸음 */
+.stamp { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; z-index: 50; }
+.stamp[hidden] { display: none; }
+.stamp-in { width: 170px; height: 170px; border-radius: 50%; border: 7px double var(--stamp); color: var(--stamp); background: rgba(255, 255, 255, .88);
+  display: grid; place-content: center; text-align: center; transform: rotate(-14deg); font-weight: 800; }
+.stamp-in b { font-size: 27px; letter-spacing: 3px; }
+.stamp-in span { font-size: 16px; margin-top: 6px; }
+.stamp.on .stamp-in { animation: stamp-in .42s cubic-bezier(.2, 1.4, .4, 1) both, stamp-out .4s ease 1.45s forwards; }
+@keyframes stamp-in { from { transform: scale(2.4) rotate(-14deg); opacity: 0; } to { transform: scale(1) rotate(-14deg); opacity: 1; } }
+@keyframes stamp-out { to { transform: scale(1.04) rotate(-14deg); opacity: 0; } }
+.p-steps-line { margin: 0 0 8px; color: var(--blue); font-weight: 600; }
+#step-line { width: 100%; }
