@@ -260,3 +260,15 @@ dialog h3 { margin: 14px 0 8px; }
 .p-grass i.lv1 { background: var(--grass-1); }
 .p-grass i.lv2 { background: var(--grass-2); }
 .p-grass i.lv3 { background: var(--grass-3); }
+
+/* 🧺 어제 | 오늘 | 내일 (앱 v25) */
+:root { --logday-off: var(--orange); --logday-off-soft: var(--orange-soft); }
+.log-day { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 4px 0 8px; }
+.log-seg { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
+.log-seg button { min-height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-weight: 600; }
+.log-seg button.on { background: var(--blue); color: #fff; }
+.log-day.off .log-seg { background: var(--logday-off-soft); border-color: var(--logday-off); }
+.log-day.off .log-seg button.on { background: var(--logday-off); }
+.log-now { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--logday-off); text-align: center; }
+.log-lock { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
+.rec-t { white-space: pre-wrap; font-weight: 400; overflow-wrap: anywhere; }

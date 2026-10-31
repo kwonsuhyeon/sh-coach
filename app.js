@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v24';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v25';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -127,11 +127,11 @@ const dbx = {
 // ============ 이벤트 (폰 기록 1건 = Dropbox 파일 1개) ============
 // 한 번에 여러 건(add·steps·decide)을 남겨도 시각이 겹치지 않게 1ms씩 민다 — 같은 초 + 무작위 이름이면 PC가 순서를 뒤섞었다
 let lastTs = 0;
-async function record(type, payload = {}) {
+async function record(type, payload = {}, date = today()) {   // date: 🧺 어제·내일 탭에서 남기면 그 날 (ts·hm은 실제 입력 시각)
   const now = new Date(lastTs = Math.max(Date.now(), lastTs + 1));
   const id = randStr(9).replace(/[^A-Za-z0-9]/g, 'x');
   const stamp = now.toISOString().replace(/[-:]/g, '').replace('.', '');   // 20261019T121055123Z — 이름순 = 시간순 (밀리초까지)
-  const ev = { id, ts: now.getTime(), date: today(), hm: nowHM(), type, payload, file: `/events/${stamp}-${id.slice(0, 4)}.json`, sent: false };
+  const ev = { id, ts: now.getTime(), date, hm: nowHM(), type, payload, file: `/events/${stamp}-${id.slice(0, 4)}.json`, sent: false };
   await idb.putEvent(ev);
   render();
   flush();
@@ -490,6 +490,7 @@ function drawPromises() {
   if (!selfcare().length && !daytypes()) { box.innerHTML = ''; return; }
   const t = today();
   box.innerHTML = prunBanner() + stepsLine() + (isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t));
+  if (view() === 'log') drawLogPromises();
 }
 // clock()이 15초마다 바뀌었는지 본다 — 시간이 지나 창이 열리거나 닫히면 줄이 바뀐다
 function promiseHomeKey() {
@@ -506,7 +507,7 @@ async function confirmPromises(date) {
   });
   await record('promise-set', { date, promises });
   delete state.pdrafts[date]; state.pedit = null;
-  toast(!promises.length ? '💚 오늘은 약속 없이 가요' : push.topic() ? `💚 약속 ${promises.length}개를 잡았어요` : `💚 약속 ${promises.length}개를 잡았어요 · 폰 알림은 꺼져 있어요`);
+  toast(!promises.length ? `💚 ${date === today() ? '오늘' : '내일'}은 약속 없이 가요` : push.topic() ? `💚 약속 ${promises.length}개를 잡았어요` : `💚 약속 ${promises.length}개를 잡았어요 · 폰 알림은 꺼져 있어요`);
   syncPromisePush();
 }
 
@@ -608,10 +609,49 @@ const QUICK_TABS = {
   한: { label: '한 일', ph: '목록에 없는 것 — 연구 30', hint: '체크하고 분을 고르거나, 없는 건 적어요' },
   밥: { label: '밥', ph: '점심 김치찌개', hint: '끼니와 메뉴' },
   몸: { label: '몸', ph: '', hint: '누르고 남기기 — 바꾼 값만 저장돼요' },
-  목표: { label: '목표', ph: '산책 20분', hint: '🎯 오늘 목표에 바로 추가돼요' },
+  목표: { label: '목표', ph: '산책 20분', hint: '🎯 이 날 목표에 바로 추가돼요' },
+  메모: { label: '메모', ph: '오늘 있었던 일', hint: '하루 노트 메모에 남아요' },
 };
 const QUICK_RE = /^(한|밥|몸|목표|메모)\s*[:：]?\s+(.+)$/;   // server.js applyQuick과 같은 규칙
-const quickTab = () => (ls.get('quickTab') in QUICK_TABS ? ls.get('quickTab') : '한');
+const quickTab = () => (logOffset() > 0 ? '목표' : ls.get('quickTab') in QUICK_TABS ? ls.get('quickTab') : '한');   // 내일은 목표만
+
+// 🧺 어제 | 오늘 | 내일 (US-210) — 들어올 때마다 오늘. 날짜는 3시 컷오프 today() 기준
+const logOffset = () => state.logOffset || 0;
+const logDate = () => addDaysStr(today(), logOffset());
+const LOG_DAYS = [[-1, '어제'], [0, '오늘'], [1, '내일']];
+const logLabel = () => LOG_DAYS.find(([n]) => n === logOffset())[1];
+const dayLocked = date => !!(state.snap && state.snap.days && state.snap.days[date] && state.snap.days[date].locked);
+function drawLogDay() {
+  const off = logOffset(), date = logDate();
+  $('#log-day').innerHTML = `<div class="log-day ${off ? 'off' : ''}"><div class="log-seg" role="tablist" aria-label="기록할 날">${LOG_DAYS.map(([n, l]) =>
+    `<button role="tab" aria-selected="${n === off}" class="${n === off ? 'on' : ''}" data-logday="${n}">${l}</button>`).join('')}</div>
+    ${off ? `<p class="log-now">${logLabel()}(${+date.slice(5, 7)}.${+date.slice(8)})에 기록 중</p>` : ''}
+    ${dayLocked(date) ? `<p class="log-lock">🔒 잠긴 날이라 내용은 보이지 않아요. 여기서 남기면 PC의 늦은 기록(mobile-late.md)으로 모여요.</p>` : ''}</div>`;
+}
+function pastPromiseCard(date) {
+  const set = promiseSet(date), ps = [...((set && set.promises) || []), ...researchPromises(date)];
+  for (const r of promiseResults()) if (r.date === date && !ps.some(p => p.id === r.id)) ps.push({ id: r.id, kind: r.kind, date, start: r.start, end: r.end });
+  if (!ps.length) return '';
+  ps.sort((a, b) => a.start.localeCompare(b.start));
+  return `<section class="card promise folded"><div class="next-head"><span>💚 어제 약속 ${ps.filter(p => promiseStatus(p).s === 'done').length}/${ps.length}</span></div>${promiseRows(date, ps)}</section>`;
+}
+function drawLogPromises() {
+  const date = logDate(), box = $('#log-promises');
+  if (dayLocked(date) || (!selfcare().length && !daytypes())) { box.innerHTML = ''; return; }
+  box.innerHTML = logOffset() < 0 ? pastPromiseCard(date) : promiseCard(date);
+}
+// 이 날 먹은 것·메모 = PC 반영분 + 아직 반영되지 않은 폰 기록 (US-211)
+function dayRecords(date) {
+  const day = (state.snap && state.snap.days && state.snap.days[date]) || {};
+  const rows = [];
+  for (const l of String(day.meals || '').split(/\r?\n/)) { const t = l.replace(/^\s*-\s*/, '').trim(); if (t) rows.push({ kind: '밥', text: t }); }
+  for (const b of String(day.memo || '').split(/\r?\n\s*\r?\n/)) { const t = b.trim(); if (t && !t.includes('💚 약속:')) rows.push({ kind: '메모', text: t }); }   // 약속은 위 카드에 있다
+  for (const e of pendingEvents(['quick', 'memo']).filter(e => e.date === date)) {
+    if (e.type === 'memo') rows.push({ kind: '메모', text: e.payload.text, wait: true });
+    else for (const l of quickLines(e.payload.text)) if (l.kind === '밥' || l.kind === '메모') rows.push({ kind: l.kind, text: l.text, wait: true });
+  }
+  return rows;
+}
 function quickLines(text) {
   return String(text || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean)
     .map(l => { const m = l.match(QUICK_RE); return m ? { kind: m[1], text: m[2].trim() } : { kind: '메모', text: l }; });
@@ -637,7 +677,7 @@ function didNow(date) {   // 스냅샷의 한 일 + PC가 아직 반영하지 �
 function drawDidList() {
   const el = $('#did-list');
   el.hidden = quickTab() !== '한'; if (el.hidden) return;
-  const date = today(), done = didNow(date);
+  const date = logDate(), done = didNow(date);
   const fromPromises = [...((promiseSet(date) || {}).promises || []), ...researchPromises(date)].map(x => PROMISE_ACT[x.kind]).filter(Boolean);
   // 끝낸 약속은 한 일에 체크된 채 보이기만 한다 — did를 만들지 않아 같은 시간이 두 번 집계되지 않는다 (US-208)
   const kept = promiseResults().filter(r => r.date === date), keptActs = kept.map(promiseActOf);
@@ -679,7 +719,7 @@ function readBodyInputs() {
   for (const k of ['weight', 'steps']) { const el = $('#body-' + k); if (el) state.body[k] = el.value.trim(); }
 }
 function drawBodyForm() {
-  const b = state.body || (state.body = bodyNow(today()));
+  const b = state.body || (state.body = bodyNow(logDate()));
   const scale = (k, label) => `<div class="body-row"><span class="body-k">${label}</span><div class="chips">${[1, 2, 3, 4, 5].map(n =>
     `<button class="chip-btn num ${b[k] === String(n) ? 'on' : ''}" data-body="${k}" data-n="${n}">${n}</button>`).join('')}</div></div>`;
   $('#body-form').innerHTML = `${scale('energy', '체력')}${scale('mood', '기분')}
@@ -690,12 +730,12 @@ function drawBodyForm() {
 }
 async function saveBody() {
   readBodyInputs();
-  const cur = bodyNow(today()), b = state.body || cur, diff = {};
+  const date = logDate(), cur = bodyNow(date), b = state.body || cur, diff = {};
   for (const k of BODY_KEYS) if (b[k] !== '' && b[k] !== cur[k]) diff[k] = b[k];
   for (const [k, re] of Object.entries(BODY_OK)) if (diff[k] && !re.test(diff[k])) { toast(k === 'weight' ? '몸무게는 68.5처럼 적어 주세요' : '걸음은 숫자로 적어 주세요'); return; }
   if (!Object.keys(diff).length) { toast('바꾼 값이 없어요'); return; }
   state.body = null;
-  await record('body', diff); toast('💪 남겼어요');
+  await record('body', diff, date); toast('💪 남겼어요');
 }
 
 // 목표 탭으로 남긴 목표(quick의 "목표 …" 줄)도 PC 병합 전에 바로 보이게 덧붙인다
@@ -1202,7 +1242,10 @@ function promiseStatus(p) {
     const endAt = cur ? prunEndAt(cur) : end.payload.at;
     return { s: 'done', startAt, endAt, min: startAt && endAt && endAt - startAt <= PROMISE_LATE_MS ? prunMin(startAt, endAt) : null, size: st && st.payload.small ? 'small' : 'full' };
   }
+  const past = p.date < today();   // 어제 약속은 시작할 수 없고 ✓ 했어요만 (US-211)
+  if (past && !(r && r.id === p.id)) return { s: 'past' };
   if (st || (r && r.id === p.id && r.phase !== 'count')) return { s: 'doing', startAt: st ? st.payload.at : r.startedAt };
+  if (p.date > today()) return { s: 'before' };
   const now = nowDayMin();
   return { s: now < hmMin(p.start) ? 'before' : now < hmMin(p.end) ? 'open' : 'past' };
 }
@@ -1219,7 +1262,7 @@ function promiseRow(p) {
   if (st.s === 'open') return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${name} 지금 시작 · ~${p.end}</button><div class="p-now-did">${did}</div>${form}`;
   return `<div class="p-now ${st.s === 'past' ? 'past' : ''}"><span class="p-now-t">${name}</span><span class="p-now-w">${p.start}~${p.end} ${did}</span></div>${form}`;
 }
-function promiseRows(date, ps) { return date === today() && ps.length ? `<div class="p-rows">${ps.map(p => promiseRow(p) + promiseHist(p)).join('')}</div>${promiseGrass()}` : ''; }
+function promiseRows(date, ps) { return date <= today() && ps.length ? `<div class="p-rows">${ps.map(p => promiseRow(p) + promiseHist(p)).join('')}</div>${date === today() ? promiseGrass() : ''}` : ''; }
 // 지난번 10.29 · 40분 · 이번 주 2회 (US-209) — 기록이 없으면 줄을 뺀다
 function promiseHist(p) {
   const mine = promiseResults().filter(r => r.kind === p.kind);
@@ -1308,9 +1351,12 @@ function clock() {
 
 // ----- 🧺 정리하기 -----
 function drawLog() {
+  const date = logDate(), off = logOffset(), locked = dayLocked(date);
+  drawLogDay(); drawLogPromises();
+  $('#joy-card').hidden = $('#dump-card').hidden = !!off;   // 즐거움·머릿속 비우기는 지금 이 순간의 일
   $('#joy-list').innerHTML = todays('joy').map(e => `<li><span>${esc(e.hm)}</span><b>✨ ${esc(e.payload.text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`).join('');
   const tab = quickTab();
-  $('#quick-tabs').innerHTML = Object.entries(QUICK_TABS).map(([k, v]) =>
+  $('#quick-tabs').innerHTML = Object.entries(QUICK_TABS).filter(([k]) => off <= 0 || k === '목표').map(([k, v]) =>
     `<button class="chip-btn ${k === tab ? 'on' : ''}" role="tab" aria-selected="${k === tab}" data-qtab="${k}">${v.label}</button>`).join('');
   $('#quick').placeholder = '예) ' + QUICK_TABS[tab].ph;
   $('#quick-hint').textContent = QUICK_TABS[tab].hint;
@@ -1319,12 +1365,18 @@ function drawLog() {
   if (tab === '몸') { readBodyInputs(); drawBodyForm(); }
   drawDidList();
   const st = weekSteps().sort((a, b) => b.date.localeCompare(a.date));
-  $('#steps-card').hidden = !st.length;
+  $('#steps-card').hidden = !st.length || !!off;
   $('#steps-list').innerHTML = st.map(x => `<li><span>${esc(x.date.slice(5).replace('-', '.'))}</span><b>${esc(x.title)}${x.line ? ` <span class="muted small">— ${esc(x.line)}</span>` : ''}</b></li>`).join('');
   const li = (e, kind, text) => `<li><span>${esc(e.hm)}</span><span class="badge">${esc(kind)}</span><b>${esc(text)}</b><span class="state">${e.sent ? '✓' : '…'}</span></li>`;
-  $('#log').innerHTML = state.events.filter(e => (e.type === 'quick' || e.type === 'body') && e.date === today()).sort((a, b) => b.ts - a.ts)
-    .flatMap(e => e.type === 'body' ? [li(e, '몸', bodyText(e.payload))] : quickLines(e.payload.text).map(l => li(e, l.kind === '한' ? '한 일' : l.kind, l.text))).join('');
-  const goals = goalsFor(today());
+  // 먹은 것·메모는 PC 반영분과 합쳐 아래 카드에 보인다 — 여기는 그 밖의 기록만
+  $('#log').innerHTML = state.events.filter(e => (e.type === 'quick' || e.type === 'body') && e.date === date).sort((a, b) => b.ts - a.ts)
+    .flatMap(e => e.type === 'body' ? [li(e, '몸', bodyText(e.payload))] : quickLines(e.payload.text).filter(l => l.kind !== '밥' && l.kind !== '메모').map(l => li(e, l.kind === '한' ? '한 일' : l.kind, l.text))).join('');
+  const recs = locked || off > 0 ? [] : dayRecords(date);
+  $('#rec-card').hidden = !recs.length;
+  $('#rec-title').textContent = `📖 ${logLabel()} 먹은 것·메모`;
+  $('#rec-list').innerHTML = recs.map(r => `<li><span class="badge">${r.kind}</span><b class="rec-t">${esc(r.text)}</b><span class="state">${r.wait ? '…' : '✓'}</span></li>`).join('');
+  const goals = locked ? [] : goalsFor(date);
+  $('#goals-title').textContent = `🎯 ${logLabel()} 목표`;
   $('#goals-card').hidden = !goals.length;
   $('#goals').innerHTML = goals.map((g, i) => `<li class="${g.done ? 'done' : ''} ${g.depth ? 'sub' : ''}">
     <input type="checkbox" data-i="${i}" ${g.done ? 'checked' : ''} aria-label="${esc(g.text)}"><span>${esc(g.text)}</span></li>`).join('');
@@ -1341,7 +1393,13 @@ const openFlow = t => {
     steps: t.steps.length ? t.steps.map(s => ({ ...s })) : buildSteps(t.kind || guessKind(t.title), '', 'phone'), edited: false };
 };
 $('#btn-back').onclick = () => { location.hash = ''; };
-window.addEventListener('hashchange', () => { if (routeHash()) return; window.scrollTo(0, 0); draw(); });
+// 다른 화면에 다녀오거나 앱을 10분 넘게 떠났다 오면 다시 오늘 (잠깐 다른 앱을 보고 와도 고른 날은 그대로)
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  if (logOffset() && Date.now() - hiddenAt > 10 * 60000) { state.logOffset = 0; state.body = null; draw(); }
+});
+window.addEventListener('hashchange', () => { state.logOffset = 0; state.body = null; if (routeHash()) return; window.scrollTo(0, 0); draw(); });
 
 $('#main').addEventListener('click', async e => {
   const b = e.target.closest('button, a'); if (!b) return;
@@ -1351,6 +1409,10 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'run') { if ((ls.get('resting') || {}).back) ls.set('resting', null); startCount(d.tid); location.hash = '#run'; return; }
   if (d.act === 'back-home') { ls.set('resting', null); location.hash = ''; return; }
   if (d.act === 'back-start') { ls.set('resting', null); return; }   // 링크는 그대로 #start로
+  if (d.logday !== undefined) {
+    state.logOffset = +d.logday; state.body = null; state.didPick = null; state.pdone = null; state.pedit = null;
+    drawLog(); return;
+  }
   if (d.qtab) { ls.set('quickTab', d.qtab); state.body = null; drawLog(); if (d.qtab !== '몸') $('#quick').focus(); return; }
   if (d.body) { readBodyInputs(); state.body[d.body] = d.n; drawBodyForm(); return; }
   if (d.water) { readBodyInputs(); state.body.water = String(Math.max(0, Math.min(99, (+state.body.water || 0) + +d.water))); drawBodyForm(); return; }
@@ -1402,7 +1464,7 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'prun-leave') { location.hash = ''; return; }
   if (d.didmin !== undefined) {
     const act = d.actName; state.didPick = null;
-    await record('did', { act, min: d.didmin ? +d.didmin : null });
+    await record('did', { act, min: d.didmin ? +d.didmin : null }, logDate());
     toast(`✓ ${act}${d.didmin ? ` ${d.didmin}분` : ''}`); return;
   }
   if (d.pmove) {
@@ -1537,9 +1599,9 @@ $('#btn-quick').onclick = async () => {
   const tab = quickTab();
   if (tab === '몸') { await saveBody(); return; }
   const lines = $('#quick').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-    .map(l => (QUICK_RE.test(l) ? l : `${tab} ${l}`));   // 직접 접두어를 쓴 줄(메모 … 등)은 그대로
+    .map(l => (logOffset() > 0 ? `목표 ${l.replace(/^목표\s*[:：]?\s+/, '')}` : QUICK_RE.test(l) ? l : `${tab} ${l}`));   // 직접 접두어를 쓴 줄(메모 … 등)은 그대로 · 내일은 목표만
   if (!lines.length) return;
-  await record('quick', { text: lines.join('\n') }); $('#quick').value = ''; toast('남겼어요');
+  await record('quick', { text: lines.join('\n') }, logDate()); $('#quick').value = ''; toast('남겼어요');
 };
 $('#btn-dump').onclick = async () => {
   const lines = $('#dump').value.split(/\r?\n/).map(s => s.trim()).filter(Boolean).slice(0, 15);
@@ -1553,12 +1615,12 @@ $('#did-list').onchange = async e => {
   const act = e.target.dataset.did; if (act == null) return;
   if (e.target.checked) { state.didPick = act; drawDidList(); return; }   // 분을 고르면 그때 남긴다
   if (state.didPick === act) { state.didPick = null; drawDidList(); return; }
-  await record('did-undo', { act }); toast(`${act} 체크를 풀었어요`);
+  await record('did-undo', { act }, logDate()); toast(`${act} 체크를 풀었어요`);
 };
 $('#goals').onchange = async e => {
   const i = +e.target.dataset.i;
-  const g = goalsFor(today())[i];
-  if (g) await record('goal-set', { text: g.text, index: i, done: e.target.checked });
+  const date = logDate(), g = goalsFor(date)[i];
+  if (g) await record('goal-set', { text: g.text, index: i, done: e.target.checked }, date);
 };
 $('#reading').onclick = async e => {
   const open = e.target.closest('[data-open]');

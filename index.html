@@ -97,7 +97,9 @@
 
   <!-- ===== 🧺 정리하기 ===== -->
   <div class="view" id="v-log" hidden>
-    <section class="card joy">
+    <div id="log-day"></div>
+    <div id="log-promises"></div>
+    <section class="card joy" id="joy-card">
       <h2>✨ 오늘의 작은 즐거움</h2>
       <p class="muted small">사소해도 좋아요. 이것 하나만 남겨도 오늘 기록이에요.</p>
       <div class="inline"><input class="field" id="joy" placeholder="예) 퇴근길 노을이 예뻤다" maxlength="200"><button class="btn primary" id="btn-joy">남기기</button></div>
@@ -117,13 +119,18 @@
       <ul class="log" id="log"></ul>
     </section>
 
+    <section class="card" id="rec-card" hidden>
+      <h2 id="rec-title"></h2>
+      <ul class="log" id="rec-list"></ul>
+    </section>
+
     <section class="card" id="steps-card" hidden>
       <h2>📄 이번 주 박사 한 걸음</h2>
       <ul class="log" id="steps-list"></ul>
     </section>
 
     <section class="card" id="goals-card" hidden>
-      <h2>🎯 오늘 목표</h2>
+      <h2 id="goals-title">🎯 오늘 목표</h2>
       <ul class="goals" id="goals"></ul>
     </section>
 
