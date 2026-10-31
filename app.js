@@ -620,6 +620,7 @@ function quickLines(text) {
 // ✅ 한 일 체크리스트 (앱 v20, 호호 "한 일 입력이 불편해") — 오늘 약속·자주 한 활동을 체크로 남긴다.
 // 체크 → 분 버튼 → did {act, min} · 체크 풀기 → did-undo {act} (PC가 같은 활동명의 마지막 줄을 지운다)
 const PROMISE_ACT = { log: '기록', gym: '운동', study: '공부', research: '논문' };
+const promiseActOf = r => PROMISE_ACT[r.kind] || (r.kind === 'care' ? '나를 아끼는 시간' : (kindOf(r.kind) || {}).name || '약속');   // server coach-promises.js와 같은 이름
 const DID_MINS = [15, 30, 60, 90, 120];
 function didNow(date) {   // 스냅샷의 한 일 + PC가 아직 반영하지 않은 내 기록
   const day = state.snap && state.snap.days && state.snap.days[date];
@@ -638,8 +639,12 @@ function drawDidList() {
   el.hidden = quickTab() !== '한'; if (el.hidden) return;
   const date = today(), done = didNow(date);
   const fromPromises = [...((promiseSet(date) || {}).promises || []), ...researchPromises(date)].map(x => PROMISE_ACT[x.kind]).filter(Boolean);
-  const acts = [...new Set([...done.map(x => x.act), ...fromPromises, ...((state.snap && state.snap.acts) || [])])];
-  el.innerHTML = acts.map(act => {
+  // 끝낸 약속은 한 일에 체크된 채 보이기만 한다 — did를 만들지 않아 같은 시간이 두 번 집계되지 않는다 (US-208)
+  const kept = promiseResults().filter(r => r.date === date), keptActs = kept.map(promiseActOf);
+  const acts = [...new Set([...done.map(x => x.act), ...fromPromises, ...((state.snap && state.snap.acts) || [])])]
+    .filter(a => !keptActs.includes(a) || done.some(x => x.act === a) || state.didPick === a);
+  el.innerHTML = kept.map(r => `<li class="done p-kept"><input type="checkbox" checked data-pact="1" aria-label="${esc(promiseActOf(r))} 약속 기록">
+    <span>${esc(promiseActOf(r))}${r.min ? ` <span class="muted small">${r.min}분</span>` : ''} ✓ 💚</span></li>`).join('') + acts.map(act => {
     const mine = done.filter(x => x.act === act), mins = mine.map(x => x.min).filter(Boolean);
     return `<li class="${mine.length ? 'done' : ''}"><input type="checkbox" data-did="${esc(act)}" ${mine.length || state.didPick === act ? 'checked' : ''} aria-label="${esc(act)}">
       <span>${esc(act)}${mins.length ? ` <span class="muted small">${mins.map(m => m + '분').join(' · ')}</span>` : ''}</span>
@@ -1178,9 +1183,20 @@ function prunBanner() {
     <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></div></section>`;
 }
 // 약속 하나의 지금 상태(US-204). v21까지의 기록은 promise-result가 없어서 시작·종료 이벤트로 계산한다
+// 지킨 약속 = 요약(최근 30일) + PC가 아직 반영하지 않은 내 기록. 폰은 보낸 지 오래된 이벤트를 지우므로 요약이 있어야 지난 기록이 남는다
+function promiseResults() {
+  const map = new Map(((state.snap && state.snap.promises) || []).map(r => [r.id, r]));
+  for (const e of pendingEvents(['promise-result'])) {
+    const p = e.payload;
+    map.set(p.id, { id: p.id, date: p.date, kind: p.kind, start: p.startAt ? hmOf(p.startAt) : '', end: p.endAt ? hmOf(p.endAt) : '', min: p.min || null, size: p.size });
+  }
+  return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
 function promiseStatus(p) {
   const res = promiseEv('promise-result', p.id), end = promiseEv('promise-end', p.id), st = promiseEv('promise-start', p.id), r = getPrun();
   if (res) return { s: 'done', ...res.payload };
+  const old = !end && !st && promiseResults().find(x => x.id === p.id);   // 이 폰에 이벤트가 없어도 요약에 있으면 지킨 약속
+  if (old) return { s: 'done', time: old.start ? old.start + (old.end ? `~${old.end}` : ' 시작') : '', min: old.min, size: old.size };
   if (end) {
     const startAt = st ? st.payload.at : null, cur = r && r.id === p.id && r.phase === 'result' ? r : null;
     const endAt = cur ? prunEndAt(cur) : end.payload.at;
@@ -1193,7 +1209,7 @@ function promiseStatus(p) {
 function promiseRow(p) {
   const k = kindOf(p.kind) || { name: '약속', emoji: '💚' }, st = promiseStatus(p), name = `${esc(k.emoji)} ${esc(k.name)}`;
   if (st.s === 'done') {
-    const time = st.startAt ? hmOf(st.startAt) + (st.endAt ? `~${hmOf(st.endAt)}` : ' 시작') : '';
+    const time = st.time != null ? st.time : st.startAt ? hmOf(st.startAt) + (st.endAt ? `~${hmOf(st.endAt)}` : ' 시작') : '';
     const bits = [time, st.min ? `${st.min}분` : '', st.size === 'small' ? '작게' : ''].filter(Boolean).join(' · ');
     return `<div class="p-now done"><span class="p-now-t">✅ ${name}</span><span class="p-now-w">${esc(bits)}</span></div>`;
   }
@@ -1203,7 +1219,26 @@ function promiseRow(p) {
   if (st.s === 'open') return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${name} 지금 시작 · ~${p.end}</button><div class="p-now-did">${did}</div>${form}`;
   return `<div class="p-now ${st.s === 'past' ? 'past' : ''}"><span class="p-now-t">${name}</span><span class="p-now-w">${p.start}~${p.end} ${did}</span></div>${form}`;
 }
-function promiseRows(date, ps) { return date === today() && ps.length ? `<div class="p-rows">${ps.map(promiseRow).join('')}</div>` : ''; }
+function promiseRows(date, ps) { return date === today() && ps.length ? `<div class="p-rows">${ps.map(p => promiseRow(p) + promiseHist(p)).join('')}</div>${promiseGrass()}` : ''; }
+// 지난번 10.29 · 40분 · 이번 주 2회 (US-209) — 기록이 없으면 줄을 뺀다
+function promiseHist(p) {
+  const mine = promiseResults().filter(r => r.kind === p.kind);
+  const last = mine.filter(r => r.date < p.date).pop();
+  const mon = addDaysStr(p.date, -((wdOf(p.date) + 6) % 7));
+  const week = mine.filter(r => r.date >= mon && r.date <= p.date).length;
+  const lastText = last ? `지난번 ${+last.date.slice(5, 7)}.${+last.date.slice(8)}${last.min ? ` · ${last.min}분` : ''}` : '';
+  const bits = [lastText, week ? `이번 주 ${week}회` : ''].filter(Boolean).join(' · ');
+  return bits ? `<p class="p-hist">${esc(bits)}</p>` : '';
+}
+// 최근 14일 잔디 — 지킨 약속 수만큼 진해진다(작게 한 약속은 0.5). 끊긴 날을 따로 알리지 않는다
+function promiseGrass() {
+  const all = promiseResults(), t = today(), cells = [];
+  for (let i = 13; i >= 0; i--) {
+    const d = addDaysStr(t, -i), n = all.filter(r => r.date === d).reduce((sum, r) => sum + (r.size === 'small' ? 0.5 : 1), 0);
+    cells.push(`<i class="lv${Math.min(3, Math.ceil(n))}" title="${d} · ${n}개"></i>`);
+  }
+  return `<div class="p-grass" role="img" aria-label="최근 14일 지킨 약속"><span class="muted small">14일</span>${cells.join('')}</div>`;
+}
 // [✓ 했어요] — 시작을 누르지 않고 먼저 한 약속(US-205). 시작·끝 시각이 없어서 PC는 타임라인에 넣지 않는다
 const DONE_MINS = [15, 30, 60, 90, 120];
 function promiseDoneForm() {
@@ -1514,6 +1549,7 @@ $('#btn-dump').onclick = async () => {
   $('#dump').value = ''; toast(`${lines.length}개를 옮겼어요. 하나씩 골라 보세요`);
 };
 $('#did-list').onchange = async e => {
+  if (e.target.dataset.pact) { e.target.checked = true; toast('약속 기록이에요'); return; }
   const act = e.target.dataset.did; if (act == null) return;
   if (e.target.checked) { state.didPick = act; drawDidList(); return; }   // 분을 고르면 그때 남긴다
   if (state.didPick === act) { state.didPick = null; drawDidList(); return; }

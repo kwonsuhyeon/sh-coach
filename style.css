@@ -250,3 +250,13 @@ dialog h3 { margin: 14px 0 8px; }
 .p-now.past .p-now-t, .p-now.past .p-now-w { color: var(--muted); font-weight: 400; }
 .p-now-did { text-align: right; margin: 4px 0 6px; }
 .p-done-form { display: grid; gap: 8px; padding: 8px 0 10px; }
+
+/* 💚 지난 기록 · 14일 잔디 · 한 일의 약속 줄 (앱 v23) */
+:root { --grass-0: #eeeeea; --grass-1: #bfe3cd; --grass-2: #6dbb8d; --grass-3: var(--promise); }
+.p-hist { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-align: right; }
+.p-grass { display: grid; grid-template-columns: auto repeat(14, 1fr); gap: 3px; align-items: center; margin-top: 10px; }
+.p-grass span { margin-right: 4px; }
+.p-grass i { display: block; aspect-ratio: 1; border-radius: 3px; background: var(--grass-0); }
+.p-grass i.lv1 { background: var(--grass-1); }
+.p-grass i.lv2 { background: var(--grass-2); }
+.p-grass i.lv3 { background: var(--grass-3); }
