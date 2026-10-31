@@ -458,15 +458,12 @@ function promiseCard(date) {
     const emo = p => (kindOf(p.kind) || {}).emoji || '💚';
     let line = ps.length ? `💚 ${label === '오늘' ? '' : '내일 '}약속 ${ps.length}개` : `💚 ${label}은 약속 없이 가요`;
     if (ps.length && label === '내일') line += ` · 첫 ${emo(ps[0])} ${ps[0].start}`;
-    else if (ps.length) {
-      const now = nowDayMin(), cur = ps.find(p => hmMin(p.start) <= now && now < hmMin(p.end)), nx = ps.find(p => hmMin(p.start) > now);
-      line += cur ? ` · 지금 ${emo(cur)} ~${cur.end}` : nx ? ` · 다음 ${emo(nx)} ${nx.start}` : ' · 오늘 창은 모두 지났어요';
-    }
+    else if (ps.length) line = `💚 오늘 약속 ${ps.filter(p => promiseStatus(p).s === 'done').length}/${ps.length}`;
     return `<section class="card promise folded"><div class="next-head"><span>${esc(line)}</span>
-      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${dayBar(date)}${promiseGoBtn(date)}${ps.length ? pushOffNote() : ''}</section>`;
+      <button class="link small" data-act="promise-edit" data-date="${date}">다시 정하기</button></div>${dayBar(date)}${promiseRows(date, ps)}${ps.length ? pushOffNote() : ''}</section>`;
   }
   const d = promiseDraft(date);
-  if (!d.rows.length) return dayType(date) ? `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${promiseGoBtn(date)}${researchPromises(date).length ? pushOffNote() : ''}</section>` : '';
+  if (!d.rows.length) return dayType(date) ? `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${promiseRows(date, researchPromises(date))}${researchPromises(date).length ? pushOffNote() : ''}</section>` : '';
   const on = d.rows.map((r, i) => [r, i]).filter(([r]) => !r.off), off = d.rows.map((r, i) => [r, i]).filter(([r]) => r.off);
   const row = ([r, i]) => {
     const c = kindOf(r.kind) || { name: r.kind, emoji: '💚' };
@@ -480,7 +477,7 @@ function promiseCard(date) {
         <select class="field" data-pend="${i}" data-pd="${date}" aria-label="끝">${timeOptions(r.end)}</select></div>` : ''}
       <div class="p-sub"><span class="muted small">${esc(step)}</span><button class="link small" data-poff="${i}" data-pd="${date}">${label}은 빼기</button></div></div>`;
   };
-  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${promiseGoBtn(date)}
+  return `<section class="card promise"><h2>💚 ${label}의 약속</h2>${dayBar(date)}${promiseRows(date, researchPromises(date))}
     ${on.length ? on.map(row).join('') : `<p class="muted small">${label}은 약속 없이 가도 괜찮아요.</p>`}
     ${off.length ? `<p class="muted small p-off">뺀 것: ${off.map(([r, i]) => `<button class="link small" data-pon="${i}" data-pd="${date}">${esc((kindOf(r.kind) || {}).emoji || '')} ${esc((kindOf(r.kind) || {}).name || r.kind)} 다시 넣기</button>`).join(' · ')}</p>` : ''}
     <div class="row ${state.pedit === date ? 'two' : ''}">${state.pedit === date ? `<button class="btn" data-act="promise-cancel" data-date="${date}">그대로 두기</button>` : ''}
@@ -488,12 +485,17 @@ function promiseCard(date) {
 }
 // 처음 화면 맨 위 — 낮에는 오늘 카드, 21시 뒤에는 (오늘 약속 한 줄 +) 내일 카드
 function drawPromises() {
+  autoSavePrun();
   const box = $('#promise-box');
   if (!selfcare().length && !daytypes()) { box.innerHTML = ''; return; }
   const t = today();
   box.innerHTML = prunBanner() + stepsLine() + (isEvening() ? (promiseSet(t) ? promiseCard(t) : '') + promiseCard(addDaysStr(t, 1)) : promiseCard(t));
 }
-const promiseHomeKey = () => (selfcare().length || daytypes() ? $('#promise-box').textContent.replace(/\s+/g, '') : '');   // clock()이 15초마다 바뀌었는지 본다
+// clock()이 15초마다 바뀌었는지 본다 — 시간이 지나 창이 열리거나 닫히면 줄이 바뀐다
+function promiseHomeKey() {
+  const t = today();
+  return [...((promiseSet(t) || {}).promises || []), ...researchPromises(t)].map(p => `${p.id}:${promiseStatus(p).s}`).join();
+}
 async function confirmPromises(date) {
   const d = promiseDraft(date), rows = d.rows.filter(r => !r.off);
   const miss = rows.find(r => !r.start);
@@ -1002,7 +1004,8 @@ function drawRun() {
 // 알림(#promise/<id>)이나 약속 카드 ▶에서 연다 → 5초 카운트다운(v10 LAUNCH) → "하는 중" 화면. 시작만 센다:
 // 남은 시간·진행 막대·끝 알람이 없다(호호 2026-10-25). 시작 = promise-start, 끝 = promise-end 이벤트 →
 // syncPromisePush가 이걸 보고 남은 재촉 알림을 지우고, 조용한 알림 한 건(마감 또는 시작 90분 뒤 중 늦은 쪽)만 다시 건다.
-// prun = { id, phase: 'count' | 'doing', countAt, delays, useSmall, startedAt, praise }
+// 하는 중 = 단계 체크가 중심, 종료는 작은 링크 → 마지막 단계를 체크하면 큰 버튼. 지난 시간은 눌렀을 때만 5초(PRD tasks/prd-promise-flow-daybar.md US-201·202).
+// prun = { id, phase: 'count' | 'doing' | 'step' | 'result', countAt, delays, useSmall, startedAt, praise, stepsDone, endedAt, late, rPick, rCustom, rSize }
 const getPrun = () => state.prun || ls.get('prun');
 const savePrun = r => { state.prun = r; ls.set('prun', r); };
 const hmOf = ms => { const d = new Date(ms); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
@@ -1041,11 +1044,38 @@ async function startPrun() {
 }
 async function endPrun(skipStep) {
   const r = getPrun(); if (!r) return;
-  const p = findPromise(r.id);
-  if (!skipStep && p && p.kind === 'research' && r.phase !== 'step') { savePrun({ ...r, phase: 'step' }); drawPrun(); return; }   // US-104
-  await record('promise-end', { id: r.id, at: Date.now() });
-  savePrun(null); stampFx(p); location.hash = '';
+  const p = findPromise(r.id), endedAt = r.endedAt || Date.now();
+  if (!skipStep && p && p.kind === 'research' && r.phase !== 'step') { savePrun({ ...r, phase: 'step', endedAt }); drawPrun(); return; }   // US-104
+  const k = (p && kindOf(p.kind)) || {}, late = endedAt - (r.startedAt || endedAt) > PROMISE_LATE_MS;
+  // 결과 카드(US-203) — 약속을 못 찾게 되어도 기록할 수 있게 종류·이름·날짜를 함께 둔다
+  savePrun({ ...r, phase: 'result', endedAt, late, rPick: late ? null : 0, rSize: r.useSmall ? 'small' : 'full',
+    kind: p ? p.kind : '', name: k.name || '약속', date: p ? p.date : String(r.id).slice(0, 10) });
+  stampFx(p); drawPrun();
+  await record('promise-end', { id: r.id, at: endedAt });
   syncPromisePush();
+}
+// 끝난 시각: rPick = 0·15·30(종료 누른 때보다 N분 전) · 'custom'(직접 고른 시각) · null(모름)
+const PROMISE_LATE_MS = 3 * 3600 * 1000;   // 이보다 길면 종료를 깜빡한 것으로 보고 분을 계산하지 않는다
+function prunEndAt(r) {
+  if (r.rPick === null || r.rPick === undefined) return null;
+  return r.rPick === 'custom' ? r.rCustom || null : r.endedAt - r.rPick * 60000;
+}
+const prunMin = (start, end) => Math.max(1, Math.round((end - start) / 60000));
+function pickCustomEnd(r, hm) {   // 시작 시각 뒤에 처음 오는 그 시각 (자정을 넘긴 경우 포함)
+  const [h, m] = hm.split(':').map(Number), d = new Date(r.startedAt);
+  d.setHours(h, m, 0, 0);
+  if (d.getTime() < r.startedAt) d.setDate(d.getDate() + 1);
+  return d.getTime() <= r.endedAt + 60000 ? d.getTime() : null;
+}
+async function savePrunResult(r) {
+  const endAt = prunEndAt(r);
+  savePrun(null);   // record → render → drawPromises가 다시 저장하지 않게 먼저 비운다
+  await record('promise-result', { id: r.id, kind: r.kind, name: r.name, date: r.date, startAt: r.startedAt, endAt, min: endAt ? prunMin(r.startedAt, endAt) : null, size: r.rSize, manual: false });
+}
+// 결과 카드에서 저장하지 않고 떠났으면 그때 고른 값(기본값)으로 남긴다
+function autoSavePrun() {
+  const r = getPrun();
+  if (r && r.phase === 'result' && view() !== 'prun') savePrunResult(r);
 }
 // 💮 도장 — 인증 사진 대신(호호 2026-10-28 "도장 찍는 듯한 스티커 효과면 돼"). 화면 가운데 쾅 찍히고 1.8초 뒤 사라진다
 function stampFx(p) {
@@ -1111,13 +1141,34 @@ function drawPrun() {
       ${small && !r.useSmall ? `<button class="${nudge ? 'btn soft wide' : 'link'} mt" data-act="pcount-small">작게 할래요 · ${esc(small)}</button>` : ''}`;
     return;
   }
-  const since = Date.now() - (r.startedAt || 0), steps = k.steps || [];
-  box.innerHTML = `${head}
+  if (r.phase === 'result') { box.innerHTML = prunResultCard(r, k); return; }
+  const since = Date.now() - (r.startedAt || 0), steps = prunSteps(r, k, small), done = r.stepsDone || [];
+  const cur = steps.findIndex((x, i) => !done.includes(i)), allDone = cur < 0;
+  const elapsed = (state.prunElapsedUntil || 0) > Date.now();
+  box.innerHTML = `<div class="muted small">${esc(k.emoji)} ${esc(k.name)} · ${p.start}~${p.end}</div>
     ${r.praise && since < 2500 ? `<div class="praise" style="animation-delay:-${since}ms">${esc(r.praise)}</div>` : ''}
     <p class="muted">${hmOf(r.startedAt)} 시작 · 하는 중</p>
-    ${steps.length ? `<details class="p-steps"><summary>단계 보기</summary><ol>${steps.map(x => `<li>${esc(x.text)}${x.min ? ` <span class="muted small">${x.min}분</span>` : ''}</li>`).join('')}</ol></details>` : ''}
-    <button class="btn primary wide big mt" data-act="prun-end">✅ 종료했어요</button>
+    ${steps.length ? `<div class="p-steps">${steps.map((x, i) => `<button class="p-step ${done.includes(i) ? 'done' : ''} ${i === cur ? 'cur' : ''}" data-pstep="${i}" aria-pressed="${done.includes(i)}">
+      <span class="p-box" aria-hidden="true"></span><span class="p-step-t">${esc(x.text)}${x.min ? ` <span class="muted small">${x.min}분</span>` : ''}</span>${i === cur ? '<span class="p-step-ok">완료</span>' : ''}</button>`).join('')}</div>` : ''}
+    <button class="link small mt p-elapsed" data-act="prun-elapsed">${elapsed ? `⏱ ${esc(elapsedText(since))}` : '⏱ 얼마나 됐지?'}</button>
+    ${allDone ? `${steps.length ? '<p class="p-more">더 해도 좋아요. 끝나면 눌러 주세요.</p>' : ''}<button class="btn primary wide big mt" data-act="prun-end">✅ 종료했어요</button>`
+      : '<button class="link mt" data-act="prun-end">오늘은 여기까지 (종료)</button>'}
     <button class="link mt" data-act="prun-leave">처음 화면으로 (하는 중으로 둘게요)</button>`;
+}
+const prunSteps = (r, k, small) => (r.useSmall ? (small ? [{ text: small }] : []) : k.steps || []);
+const elapsedText = ms => { const m = Math.floor(ms / 60000); return m < 1 ? '방금 시작했어요' : `${m}분째`; };
+// 도장 뒤 결과 카드 — 끝난 시각·크기를 고친다. 저장하지 않고 떠나도 autoSavePrun이 남긴다
+function prunResultCard(r, k) {
+  const endAt = prunEndAt(r), chip = (v, label, off) => `<button class="chip-btn ${r.rPick === (v === 'null' ? null : v) ? 'on' : ''}" data-rpick="${v}" ${off ? 'disabled' : ''}>${label}</button>`;
+  const before = m => r.endedAt - m * 60000 < r.startedAt;
+  const custom = r.rPick === 'custom' ? `<input class="field mt" type="time" id="pr-end" aria-label="끝난 시각" value="${r.rCustom ? hmOf(r.rCustom) : ''}">` : '';
+  return `<div class="p-result"><div class="p-result-head">${esc(k.emoji)} ${esc(k.name)}</div>
+    <div class="run-step">${hmOf(r.startedAt)}~${endAt ? `${hmOf(endAt)} · ${prunMin(r.startedAt, endAt)}분` : ''}</div>
+    <p class="muted small">${r.late ? '시작한 지 오래됐어요. 언제 끝났어요?' : '끝난 시각'}</p>
+    <div class="chips small-chips">${r.late ? chip('custom', '직접') + chip('null', '기억 안 나요') : chip(0, '방금') + chip(15, '15분 전', before(15)) + chip(30, '30분 전', before(30)) + chip('custom', '직접')}</div>${custom}
+    <p class="muted small mt">크기</p>
+    <div class="chips small-chips"><button class="chip-btn ${r.rSize === 'full' ? 'on' : ''}" data-rsize="full">다 했어요</button><button class="chip-btn ${r.rSize === 'small' ? 'on' : ''}" data-rsize="small">작게 했어요</button></div>
+    <button class="btn primary wide big mt" data-act="prun-save">저장</button></div>`;
 }
 // 처음 화면 — 하는 중인 약속 한 줄, 지금 창이 열린 약속 ▶
 function prunBanner() {
@@ -1126,14 +1177,48 @@ function prunBanner() {
   return `<section class="card promise folded"><div class="next-head"><span>${esc(k.emoji)} ${esc(k.name)} 하는 중 · ${hmOf(r.startedAt)} 시작</span>
     <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></div></section>`;
 }
-function promiseGoBtn(date) {
-  if (date !== today()) return '';
-  const now = nowDayMin(), r = getPrun();
-  const p = [...((promiseSet(date) || {}).promises || []), ...researchPromises(date)]
-    .find(x => hmMin(x.start) <= now && now < hmMin(x.end) && !promiseEv('promise-end', x.id) && !promiseEv('promise-start', x.id) && !(r && r.id === x.id));
-  if (!p) return '';
-  const k = kindOf(p.kind) || { name: '약속', emoji: '💚' };
-  return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${esc(k.emoji)} ${esc(k.name)} 지금 시작</button>`;
+// 약속 하나의 지금 상태(US-204). v21까지의 기록은 promise-result가 없어서 시작·종료 이벤트로 계산한다
+function promiseStatus(p) {
+  const res = promiseEv('promise-result', p.id), end = promiseEv('promise-end', p.id), st = promiseEv('promise-start', p.id), r = getPrun();
+  if (res) return { s: 'done', ...res.payload };
+  if (end) {
+    const startAt = st ? st.payload.at : null, cur = r && r.id === p.id && r.phase === 'result' ? r : null;
+    const endAt = cur ? prunEndAt(cur) : end.payload.at;
+    return { s: 'done', startAt, endAt, min: startAt && endAt && endAt - startAt <= PROMISE_LATE_MS ? prunMin(startAt, endAt) : null, size: st && st.payload.small ? 'small' : 'full' };
+  }
+  if (st || (r && r.id === p.id && r.phase !== 'count')) return { s: 'doing', startAt: st ? st.payload.at : r.startedAt };
+  const now = nowDayMin();
+  return { s: now < hmMin(p.start) ? 'before' : now < hmMin(p.end) ? 'open' : 'past' };
+}
+function promiseRow(p) {
+  const k = kindOf(p.kind) || { name: '약속', emoji: '💚' }, st = promiseStatus(p), name = `${esc(k.emoji)} ${esc(k.name)}`;
+  if (st.s === 'done') {
+    const time = st.startAt ? hmOf(st.startAt) + (st.endAt ? `~${hmOf(st.endAt)}` : ' 시작') : '';
+    const bits = [time, st.min ? `${st.min}분` : '', st.size === 'small' ? '작게' : ''].filter(Boolean).join(' · ');
+    return `<div class="p-now done"><span class="p-now-t">✅ ${name}</span><span class="p-now-w">${esc(bits)}</span></div>`;
+  }
+  if (st.s === 'doing') return `<div class="p-now"><span class="p-now-t">${name}</span><span class="p-now-w">${hmOf(st.startAt)} 시작 <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></span></div>`;
+  const did = `<button class="link small" data-act="pdone-open" data-id="${esc(p.id)}">✓ 했어요</button>`;
+  const form = state.pdone && state.pdone.id === p.id ? promiseDoneForm() : '';
+  if (st.s === 'open') return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${name} 지금 시작 · ~${p.end}</button><div class="p-now-did">${did}</div>${form}`;
+  return `<div class="p-now ${st.s === 'past' ? 'past' : ''}"><span class="p-now-t">${name}</span><span class="p-now-w">${p.start}~${p.end} ${did}</span></div>${form}`;
+}
+function promiseRows(date, ps) { return date === today() && ps.length ? `<div class="p-rows">${ps.map(promiseRow).join('')}</div>` : ''; }
+// [✓ 했어요] — 시작을 누르지 않고 먼저 한 약속(US-205). 시작·끝 시각이 없어서 PC는 타임라인에 넣지 않는다
+const DONE_MINS = [15, 30, 60, 90, 120];
+function promiseDoneForm() {
+  const f = state.pdone;
+  return `<div class="p-done-form"><div class="chips small-chips">${[...DONE_MINS, 0].map(m => `<button class="chip-btn ${f.min === m ? 'on' : ''}" data-pdmin="${m}">${m ? m + '분' : '분 없이'}</button>`).join('')}</div>
+    <div class="chips small-chips"><button class="chip-btn ${f.size === 'full' ? 'on' : ''}" data-pdsize="full">다 했어요</button><button class="chip-btn ${f.size === 'small' ? 'on' : ''}" data-pdsize="small">작게 했어요</button></div>
+    <div class="row"><button class="btn" data-act="pdone-cancel">그만두기</button><button class="btn primary" data-act="pdone-save">저장</button></div></div>`;
+}
+async function savePromiseDone() {
+  const f = state.pdone, p = f && findPromise(f.id); state.pdone = null; if (!p) return;
+  const k = kindOf(p.kind) || {};
+  stampFx(p);
+  await record('promise-result', { id: p.id, kind: p.kind, name: k.name || '약속', date: p.date, startAt: null, endAt: null, min: f.min || null, size: f.size, manual: true });
+  await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
+  syncPromisePush();
 }
 
 // 1초보다 잘게 도는 시계 하나가 두 타이머(실행·쉼)를 함께 돌린다 — 어느 화면에 있든 끝나면 울린다
@@ -1252,6 +1337,30 @@ $('#main').addEventListener('click', async e => {
   }
   if (d.act === 'pcount-small') { const r = getPrun(); savePrun({ ...r, useSmall: true, countAt: Date.now() + LAUNCH.count * 1000 }); drawPrun(); return; }
   if (d.act === 'prun-end') { await endPrun(); return; }
+  if (d.pstep !== undefined) {
+    const r = getPrun(), i = +d.pstep, done = r.stepsDone || [];
+    savePrun({ ...r, stepsDone: done.includes(i) ? done.filter(x => x !== i) : [...done, i] }); drawPrun(); return;
+  }
+  if (d.act === 'prun-elapsed') {
+    state.prunElapsedUntil = Date.now() + 5000; drawPrun();
+    clearTimeout(state.prunElapsedT); state.prunElapsedT = setTimeout(() => { if (view() === 'prun') drawPrun(); }, 5100);
+    return;
+  }
+  if (d.rpick !== undefined) {
+    const v = d.rpick === 'custom' ? 'custom' : d.rpick === 'null' ? null : +d.rpick;
+    savePrun({ ...getPrun(), rPick: v }); drawPrun(); return;
+  }
+  if (d.rsize) { savePrun({ ...getPrun(), rSize: d.rsize }); drawPrun(); return; }
+  if (d.act === 'prun-save') {
+    const r = getPrun();
+    if (r.rPick === 'custom' && !r.rCustom) { toast('끝난 시각을 골라 주세요'); return; }
+    const saving = savePrunResult(r); location.hash = ''; await saving; return;
+  }
+  if (d.act === 'pdone-open') { state.pdone = { id: d.id, min: 0, size: 'full' }; drawPromises(); return; }
+  if (d.act === 'pdone-cancel') { state.pdone = null; drawPromises(); return; }
+  if (d.pdmin !== undefined) { state.pdone.min = +d.pdmin; drawPromises(); return; }
+  if (d.pdsize) { state.pdone.size = d.pdsize; drawPromises(); return; }
+  if (d.act === 'pdone-save') { await savePromiseDone(); return; }
   if (d.steppaper !== undefined) { const r = readStepInputs(); savePrun({ ...r, paper: r.paper === d.steppaper ? null : d.steppaper }); drawPrun(); return; }
   if (d.act === 'step-save') { await saveStep(); return; }
   if (d.act === 'step-skip') { await endPrun(true); return; }
@@ -1365,6 +1474,11 @@ $('#main').addEventListener('input', e => {
 });
 // 약속 시간 창 고르기 — 시작을 옮기면 길이는 그대로, 끝이 시작보다 앞서면 30분 뒤로
 $('#main').addEventListener('change', e => {
+  if (e.target.id === 'pr-end') {
+    const r = getPrun(), at = e.target.value ? pickCustomEnd(r, e.target.value) : null;
+    if (e.target.value && !at) toast('종료를 누른 때보다 늦은 시각이에요');
+    savePrun({ ...r, rCustom: at }); drawPrun(); return;
+  }
   const t = e.target.dataset, dr = (state.pdrafts || {})[t.pd]; if (!dr || (t.pstart === undefined && t.pend === undefined)) return;
   const r = dr.rows[+(t.pstart ?? t.pend)], len = hmMin(r.end) - hmMin(r.start);
   if (t.pstart !== undefined) { r.start = e.target.value; r.end = minHm(Math.min(hmMin(r.start) + (len > 0 ? len : 60), 24 * 60 - 1)); }

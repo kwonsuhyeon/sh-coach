@@ -205,8 +205,6 @@ dialog h3 { margin: 14px 0 8px; }
 .btn.big { font-size: 18px; padding: 15px 14px; }
 .p-go { margin-top: 10px; }
 .p-steps { margin: 10px 0 0; }
-.p-steps summary { cursor: pointer; color: var(--blue); font-size: 14px; }
-.p-steps ol { margin: 8px 0 0; padding-left: 20px; line-height: 1.7; }
 .did-list { margin: 4px 0 10px; }
 .did-list li { flex-wrap: wrap; }
 .did-list .did-mins { flex-basis: 100%; padding-left: 30px; margin-top: 2px; }
@@ -225,3 +223,30 @@ dialog h3 { margin: 14px 0 8px; }
 @keyframes stamp-out { to { transform: scale(1.04) rotate(-14deg); opacity: 0; } }
 .p-steps-line { margin: 0 0 8px; color: var(--blue); font-weight: 600; }
 #step-line { width: 100%; }
+
+/* v22 — 단계 중심 하는 중 · 결과 카드 · 약속별 상태 */
+.p-step { font: inherit; display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 10px 12px; margin-top: 8px; text-align: left;
+  background: #fff; color: var(--ink); border: 1px solid var(--line); border-radius: 12px; cursor: pointer; }
+.p-step.cur { border-color: var(--promise); background: var(--promise-soft); font-weight: 600; }
+.p-step.done .p-step-t { color: var(--muted); text-decoration: line-through; }
+.p-box { flex: none; width: 20px; height: 20px; border: 2px solid var(--muted); border-radius: 5px; display: grid; place-items: center; }
+.p-step.done .p-box { background: var(--promise); border-color: var(--promise); }
+.p-step.done .p-box::after { content: ''; width: 5px; height: 10px; border: solid #fff; border-width: 0 2px 2px 0; transform: translateY(-1px) rotate(45deg); }
+.p-step-t { flex: 1; min-width: 0; }
+.p-step-ok { flex: none; color: var(--promise); font-size: 14px; }
+.p-elapsed { display: block; }
+.p-more { margin: 12px 0 0; color: var(--promise); font-weight: 600; }
+.p-result { margin-top: 4px; }
+.p-result-head { font-weight: 700; }
+.chip-btn:disabled { opacity: .4; cursor: default; }
+.p-rows { margin-top: 8px; }
+.p-now { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.p-rows > :first-child.p-now { border-top: 0; }
+.p-now-t { font-weight: 600; }
+.p-now-w { font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.p-now-w .link { margin-left: 6px; font-size: 13px; }
+.p-now.done .p-now-t { color: var(--promise); }
+.p-now.done .p-now-w { color: var(--ink); }
+.p-now.past .p-now-t, .p-now.past .p-now-w { color: var(--muted); font-weight: 400; }
+.p-now-did { text-align: right; margin: 4px 0 6px; }
+.p-done-form { display: grid; gap: 8px; padding: 8px 0 10px; }
