@@ -248,8 +248,12 @@ dialog h3 { margin: 14px 0 8px; }
 .p-now.done .p-now-t { color: var(--promise); }
 .p-now.done .p-now-w { color: var(--ink); }
 .p-now.past .p-now-t, .p-now.past .p-now-w { color: var(--muted); font-weight: 400; }
-.p-now-did { text-align: right; margin: 4px 0 6px; }
-.p-now-did .link { margin-left: 10px; font-size: 13px; }
+.p-acts { margin: 6px 0 8px; }
+.p-acts .btn { font-size: 14px; padding-top: 9px; padding-bottom: 9px; }
+.p-small { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 14px; }
+.p-small input { width: 18px; height: 18px; flex: none; margin: 0; }
+.p-run-links { display: flex; justify-content: space-between; gap: 12px; margin-top: 18px; }
+.p-now.done .p-now-w { overflow-wrap: anywhere; }
 .p-now.skip .p-now-t { color: var(--muted); }
 .p-now.skip .p-now-w { color: var(--ink); overflow-wrap: anywhere; }
 .p-done-form { display: grid; gap: 8px; padding: 8px 0 10px; }
