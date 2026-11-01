@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v25';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v26';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -1235,6 +1235,8 @@ function promiseResults() {
 function promiseStatus(p) {
   const res = promiseEv('promise-result', p.id), end = promiseEv('promise-end', p.id), st = promiseEv('promise-start', p.id), r = getPrun();
   if (res) return { s: 'done', ...res.payload };
+  const skip = promiseEv('promise-skip', p.id);   // promise-end도 함께 남으니 end보다 먼저 본다
+  if (skip) return { s: 'skip', reason: skip.payload.reason };
   const old = !end && !st && promiseResults().find(x => x.id === p.id);   // 이 폰에 이벤트가 없어도 요약에 있으면 지킨 약속
   if (old) return { s: 'done', time: old.start ? old.start + (old.end ? `~${old.end}` : ' 시작') : '', min: old.min, size: old.size };
   if (end) {
@@ -1257,8 +1259,9 @@ function promiseRow(p) {
     return `<div class="p-now done"><span class="p-now-t">✅ ${name}</span><span class="p-now-w">${esc(bits)}</span></div>`;
   }
   if (st.s === 'doing') return `<div class="p-now"><span class="p-now-t">${name}</span><span class="p-now-w">${hmOf(st.startAt)} 시작 <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></span></div>`;
-  const did = `<button class="link small" data-act="pdone-open" data-id="${esc(p.id)}">✓ 했어요</button>`;
-  const form = state.pdone && state.pdone.id === p.id ? promiseDoneForm() : '';
+  if (st.s === 'skip') return `<div class="p-now skip"><span class="p-now-t">${name}</span><span class="p-now-w">안 했어요${st.reason ? ` · ${esc(st.reason)}` : ''}</span></div>`;
+  const did = `<button class="link small" data-act="pdone-open" data-id="${esc(p.id)}">✓ 했어요</button><button class="link small" data-act="pskip-open" data-id="${esc(p.id)}">안 했어요</button>`;
+  const form = state.pdone && state.pdone.id === p.id ? promiseDoneForm() : state.pskip && state.pskip.id === p.id ? promiseSkipForm() : '';
   if (st.s === 'open') return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${name} 지금 시작 · ~${p.end}</button><div class="p-now-did">${did}</div>${form}`;
   return `<div class="p-now ${st.s === 'past' ? 'past' : ''}"><span class="p-now-t">${name}</span><span class="p-now-w">${p.start}~${p.end} ${did}</span></div>${form}`;
 }
@@ -1295,6 +1298,18 @@ async function savePromiseDone() {
   const k = kindOf(p.kind) || {};
   stampFx(p);
   await record('promise-result', { id: p.id, kind: p.kind, name: k.name || '약속', date: p.date, startAt: null, endAt: null, min: f.min || null, size: f.size, manual: true });
+  await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
+  syncPromisePush();
+}
+// [안 했어요] — 이유 한 줄로 그 약속을 마무리한다. 지킨 약속이 아니라서 잔디·지난번·이번 주 횟수에 들어가지 않는다
+function promiseSkipForm() {
+  return `<div class="p-done-form"><input class="field pskip-reason" maxlength="100" aria-label="안 한 이유" placeholder="왜 안 했는지 한 줄 (비워도 돼요)" value="${esc(state.pskip.reason)}">
+    <div class="row"><button class="btn" data-act="pskip-cancel">그만두기</button><button class="btn primary" data-act="pskip-save">저장</button></div></div>`;
+}
+async function savePromiseSkip() {
+  const f = state.pskip, p = f && findPromise(f.id); state.pskip = null; if (!p) return;
+  const reason = f.reason.trim();
+  await record('promise-skip', { id: p.id, kind: p.kind, name: (kindOf(p.kind) || {}).name || '약속', date: p.date, reason }, p.date);
   await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
   syncPromisePush();
 }
@@ -1410,7 +1425,7 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'back-home') { ls.set('resting', null); location.hash = ''; return; }
   if (d.act === 'back-start') { ls.set('resting', null); return; }   // 링크는 그대로 #start로
   if (d.logday !== undefined) {
-    state.logOffset = +d.logday; state.body = null; state.didPick = null; state.pdone = null; state.pedit = null;
+    state.logOffset = +d.logday; state.body = null; state.didPick = null; state.pdone = null; state.pskip = null; state.pedit = null;
     drawLog(); return;
   }
   if (d.qtab) { ls.set('quickTab', d.qtab); state.body = null; drawLog(); if (d.qtab !== '몸') $('#quick').focus(); return; }
@@ -1453,7 +1468,10 @@ $('#main').addEventListener('click', async e => {
     if (r.rPick === 'custom' && !r.rCustom) { toast('끝난 시각을 골라 주세요'); return; }
     const saving = savePrunResult(r); location.hash = ''; await saving; return;
   }
-  if (d.act === 'pdone-open') { state.pdone = { id: d.id, min: 0, size: 'full' }; drawPromises(); return; }
+  if (d.act === 'pskip-open') { state.pdone = null; state.pskip = { id: d.id, reason: '' }; drawPromises(); const el = [...document.querySelectorAll('.pskip-reason')].find(x => x.offsetParent); if (el) el.focus(); return; }   // 약속 카드는 처음 화면과 기록 화면에 함께 그려진다
+  if (d.act === 'pskip-cancel') { state.pskip = null; drawPromises(); return; }
+  if (d.act === 'pskip-save') { await savePromiseSkip(); return; }
+  if (d.act === 'pdone-open') { state.pskip = null; state.pdone = { id: d.id, min: 0, size: 'full' }; drawPromises(); return; }
   if (d.act === 'pdone-cancel') { state.pdone = null; drawPromises(); return; }
   if (d.pdmin !== undefined) { state.pdone.min = +d.pdmin; drawPromises(); return; }
   if (d.pdsize) { state.pdone.size = d.pdsize; drawPromises(); return; }
@@ -1565,6 +1583,7 @@ $('#main').addEventListener('click', async e => {
 });
 // 단계 문장·분 고치기 (입력 중에는 다시 그리지 않는다)
 $('#main').addEventListener('input', e => {
+  if (e.target.classList.contains('pskip-reason') && state.pskip) { state.pskip.reason = e.target.value; return; }   // 다시 그려져도 쓰던 글이 남는다
   const f = state.flow; if (!f) return;
   if (e.target.dataset.step !== undefined) { f.steps[+e.target.dataset.step].text = e.target.value.replace(/\n/g, ' '); f.edited = true; fitText(e.target); }
   if (e.target.dataset.min !== undefined) { const m = parseInt(e.target.value, 10); f.steps[+e.target.dataset.min].min = m > 0 ? m : null; f.edited = true; }

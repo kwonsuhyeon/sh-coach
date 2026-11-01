@@ -249,6 +249,9 @@ dialog h3 { margin: 14px 0 8px; }
 .p-now.done .p-now-w { color: var(--ink); }
 .p-now.past .p-now-t, .p-now.past .p-now-w { color: var(--muted); font-weight: 400; }
 .p-now-did { text-align: right; margin: 4px 0 6px; }
+.p-now-did .link { margin-left: 10px; font-size: 13px; }
+.p-now.skip .p-now-t { color: var(--muted); }
+.p-now.skip .p-now-w { color: var(--ink); overflow-wrap: anywhere; }
 .p-done-form { display: grid; gap: 8px; padding: 8px 0 10px; }
 
 /* 💚 지난 기록 · 14일 잔디 · 한 일의 약속 줄 (앱 v23) */
