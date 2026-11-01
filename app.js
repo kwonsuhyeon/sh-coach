@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v26';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v27';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -555,7 +555,7 @@ function syncPromisePush() {
     for (const date of [0, 1, 2, 3].map(n => addDaysStr(t, n))) {
       const set = last('promise-set', date), mv = last('day-move', date);
       for (const p of [...(set ? set.payload.promises : []), ...researchPromises(date, mv ? mv.payload.move : 'shuttle')]) {
-        const byId = type => events.filter(e => e.type === type && e.payload.id === p.id).sort((x, y) => y.ts - x.ts)[0];
+        const byId = type => promiseEvIn(events, type, p.id);
         const st = byId('promise-start');
         if (byId('promise-end')) continue;   // 끝낸 약속 — 남은 알림을 모두 지운다
         want[p.id] = st ? { date, sig: 'started', alarms: () => quietAlarm(p, st.payload.at), click: `#promise/${p.id}` }
@@ -1058,7 +1058,10 @@ function findPromise(id) {
   const date = String(id).slice(0, 10), set = promiseSet(date);
   return (set && set.promises.find(x => x.id === id)) || researchPromises(date).find(x => x.id === id) || null;
 }
-const promiseEv = (type, id) => state.events.filter(e => e.type === type && e.payload.id === id).sort((a, b) => b.ts - a.ts)[0];
+const lastEv = (events, type, id) => events.filter(e => e.type === type && e.payload.id === id).sort((a, b) => b.ts - a.ts)[0];
+// [다시] 이전의 시작·결과·종료는 없던 일로 친다
+const promiseEvIn = (events, type, id) => { const e = lastEv(events, type, id), u = lastEv(events, 'promise-undo', id); return e && u && u.ts >= e.ts ? undefined : e; };
+const promiseEv = (type, id) => promiseEvIn(state.events, type, id);
 async function openPromise(id) {
   const evs = await idb.events();   // 알림으로 막 열렸으면 아직 기록을 안 읽었다 → 합친다
   state.events = [...state.events.filter(e => !evs.some(x => x.id === e.id)), ...evs];
@@ -1226,8 +1229,9 @@ function prunBanner() {
 // 지킨 약속 = 요약(최근 30일) + PC가 아직 반영하지 않은 내 기록. 폰은 보낸 지 오래된 이벤트를 지우므로 요약이 있어야 지난 기록이 남는다
 function promiseResults() {
   const map = new Map(((state.snap && state.snap.promises) || []).map(r => [r.id, r]));
-  for (const e of pendingEvents(['promise-result'])) {
+  for (const e of pendingEvents(['promise-result', 'promise-undo'])) {
     const p = e.payload;
+    if (e.type === 'promise-undo') { map.delete(p.id); continue; }
     map.set(p.id, { id: p.id, date: p.date, kind: p.kind, start: p.startAt ? hmOf(p.startAt) : '', end: p.endAt ? hmOf(p.endAt) : '', min: p.min || null, size: p.size });
   }
   return [...map.values()].sort((a, b) => a.date.localeCompare(b.date));
@@ -1253,13 +1257,14 @@ function promiseStatus(p) {
 }
 function promiseRow(p) {
   const k = kindOf(p.kind) || { name: '약속', emoji: '💚' }, st = promiseStatus(p), name = `${esc(k.emoji)} ${esc(k.name)}`;
+  const redo = `<button class="link small" data-act="promise-undo" data-id="${esc(p.id)}">다시</button>`;
   if (st.s === 'done') {
     const time = st.time != null ? st.time : st.startAt ? hmOf(st.startAt) + (st.endAt ? `~${hmOf(st.endAt)}` : ' 시작') : '';
     const bits = [time, st.min ? `${st.min}분` : '', st.size === 'small' ? '작게' : ''].filter(Boolean).join(' · ');
-    return `<div class="p-now done"><span class="p-now-t">✅ ${name}</span><span class="p-now-w">${esc(bits)}</span></div>`;
+    return `<div class="p-now done"><span class="p-now-t">✅ ${name}</span><span class="p-now-w">${esc(bits)} ${redo}</span></div>`;
   }
   if (st.s === 'doing') return `<div class="p-now"><span class="p-now-t">${name}</span><span class="p-now-w">${hmOf(st.startAt)} 시작 <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></span></div>`;
-  if (st.s === 'skip') return `<div class="p-now skip"><span class="p-now-t">${name}</span><span class="p-now-w">안 했어요${st.reason ? ` · ${esc(st.reason)}` : ''}</span></div>`;
+  if (st.s === 'skip') return `<div class="p-now skip"><span class="p-now-t">${name}</span><span class="p-now-w">안 했어요${st.reason ? ` · ${esc(st.reason)}` : ''} ${redo}</span></div>`;
   const did = `<button class="link small" data-act="pdone-open" data-id="${esc(p.id)}">✓ 했어요</button><button class="link small" data-act="pskip-open" data-id="${esc(p.id)}">안 했어요</button>`;
   const form = state.pdone && state.pdone.id === p.id ? promiseDoneForm() : state.pskip && state.pskip.id === p.id ? promiseSkipForm() : '';
   if (st.s === 'open') return `<button class="btn soft wide p-go" data-act="promise-go" data-id="${esc(p.id)}">▶ ${name} 지금 시작 · ~${p.end}</button><div class="p-now-did">${did}</div>${form}`;
@@ -1299,6 +1304,15 @@ async function savePromiseDone() {
   stampFx(p);
   await record('promise-result', { id: p.id, kind: p.kind, name: k.name || '약속', date: p.date, startAt: null, endAt: null, min: f.min || null, size: f.size, manual: true });
   await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
+  syncPromisePush();
+}
+// [다시] — 남긴 결과를 지우고 약속을 처음 상태로 돌린다. PC도 표·메모·타임라인에서 같이 지운다
+async function undoPromise(id) {
+  const p = findPromise(id); if (!p) return;
+  const k = kindOf(p.kind) || {};
+  if (!confirm(`${k.name || '약속'} 기록을 지우고 다시 남길까요?`)) return;
+  const st = promiseStatus(p);
+  await record('promise-undo', { id: p.id, kind: p.kind, name: k.name || '약속', date: p.date, ...(st.s === 'skip' ? { skipped: true, reason: st.reason || '' } : {}) }, p.date);
   syncPromisePush();
 }
 // [안 했어요] — 이유 한 줄로 그 약속을 마무리한다. 지킨 약속이 아니라서 잔디·지난번·이번 주 횟수에 들어가지 않는다
@@ -1468,6 +1482,7 @@ $('#main').addEventListener('click', async e => {
     if (r.rPick === 'custom' && !r.rCustom) { toast('끝난 시각을 골라 주세요'); return; }
     const saving = savePrunResult(r); location.hash = ''; await saving; return;
   }
+  if (d.act === 'promise-undo') { await undoPromise(d.id); return; }
   if (d.act === 'pskip-open') { state.pdone = null; state.pskip = { id: d.id, reason: '' }; drawPromises(); const el = [...document.querySelectorAll('.pskip-reason')].find(x => x.offsetParent); if (el) el.focus(); return; }   // 약속 카드는 처음 화면과 기록 화면에 함께 그려진다
   if (d.act === 'pskip-cancel') { state.pskip = null; drawPromises(); return; }
   if (d.act === 'pskip-save') { await savePromiseSkip(); return; }
@@ -1736,6 +1751,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
   state.connected = !!(await idb.get('auth'));
   state.hasKey = !!(await idb.get('key'));
   if (justLoggedIn) { await record('hello', { ua: navigator.userAgent.slice(0, 80) }); toast('Dropbox에 연결됐어요'); }   // 앱 폴더가 이때 생긴다
+  state.snap = (await idb.get('snapshot')) || null;   // 폰에 있는 요약으로 먼저 그린다 — Dropbox를 기다리면 약속·기록 칸이 늦게 뜬다
   render();
   await loadSnapshot();
   render();
