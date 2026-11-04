@@ -203,7 +203,7 @@ dialog h3 { margin: 14px 0 8px; }
 /* v20 — 약속 실행 · 한 일 체크리스트 */
 .btn.wide { display: block; width: 100%; text-align: center; }
 .btn.big { font-size: 18px; padding: 15px 14px; }
-.p-go { margin-top: 10px; }
+/* .p-go(지금 시작 큰 버튼)는 v29에서 ▶ 시작 버튼으로 바뀌었다 */
 .p-steps { margin: 10px 0 0; }
 .did-list { margin: 4px 0 10px; }
 .did-list li { flex-wrap: wrap; }
@@ -279,3 +279,10 @@ dialog h3 { margin: 14px 0 8px; }
 .log-now { margin: 6px 0 0; font-size: 13px; font-weight: 600; color: var(--logday-off); text-align: center; }
 .log-lock { margin: 6px 0 0; font-size: 13px; color: var(--muted); }
 .rec-t { white-space: pre-wrap; font-weight: 400; overflow-wrap: anywhere; }
+
+/* 💚 시작 · 했어요 · 안 했어요 같은 크기 + 실제 시각 (앱 v29, tasks/prd-promise-actual-time.md) */
+.row.three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.row.three .btn { min-width: 0; white-space: nowrap; text-align: center; padding-left: 4px; padding-right: 4px; }
+.p-now.open .p-now-w { color: var(--promise); font-weight: 600; }
+.p-done-time { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+.p-result .chips + .muted.small, .p-result .field + .muted.small { margin-top: 10px; }
