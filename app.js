@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v29';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v30';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -1348,31 +1348,45 @@ function dayHmAt(date, hm) {
   if (hmMin(hm) < C.DAY_CUTOFF_H * 60) d.setDate(d.getDate() + 1);
   return d.getTime();
 }
+// 끝: ePick = null(분으로 계산) · 'custom'(직접 고른 시각 — 분은 시작~끝으로 다시 센다) (2026-11-04 호호 요청)
 function pdoneTimes(f, p) {
   const s = f.sPick === 'sched' ? (p && p.start) || '' : f.sPick === 'custom' ? f.sHm || '' : '';
   const startAt = dayHmAt(p && p.date, s);
-  return { startAt, endAt: startAt && f.min ? startAt + f.min * 60000 : null };
+  if (startAt && f.ePick === 'custom') {
+    let endAt = dayHmAt(p && p.date, f.eHm);
+    if (endAt && endAt <= startAt) endAt += 24 * 3600 * 1000;   // 자정을 넘겨 끝난 경우
+    if (endAt && endAt - startAt > MAX_SPAN_MS) return { startAt, endAt: null, min: null, bad: true };
+    return { startAt, endAt, min: endAt ? prunMin(startAt, endAt) : f.min || null };
+  }
+  return { startAt, endAt: startAt && f.min ? startAt + f.min * 60000 : null, min: f.min || null };
 }
 function promiseDoneForm(p) {
   const f = state.pdone, sp = f.sPick || null, t = pdoneTimes(f, p);
   const schip = (v, label) => `<button class="chip-btn ${String(sp) === v ? 'on' : ''}" data-pdspick="${v}">${label}</button>`;
-  const preview = t.startAt ? `<p class="small p-done-time">${hmOf(t.startAt)}${t.endAt ? `~${hmOf(t.endAt)}` : ' 시작'}</p>` : '';
+  const preview = t.startAt ? `<p class="small p-done-time">${hmOf(t.startAt)}${t.endAt ? `~${hmOf(t.endAt)} · ${t.min}분` : ' 시작'}</p>` : '';
+  const echip = (v, label) => `<button class="chip-btn ${String(f.ePick || null) === v ? 'on' : ''}" data-pdepick="${v}">${label}</button>`;
+  const endRow = sp ? `<div class="muted small">끝</div>
+    <div class="chips small-chips">${echip('null', '분으로 계산') + echip('custom', '직접')}</div>
+    ${f.ePick === 'custom' ? `<input class="field pd-end" type="time" aria-label="끝난 시각" value="${esc(f.eHm || '')}">` : ''}` : '';
+  const custEnd = sp && f.ePick === 'custom';
   return `<div class="p-done-form"><input class="field p-note" data-note="pdone" maxlength="100" aria-label="무엇을 했어요" placeholder="무엇을 했어요? (비워도 돼요)" value="${esc(f.note)}">
-    <div class="chips small-chips">${DONE_MINS.map(m => `<button class="chip-btn ${f.min === m ? 'on' : ''}" data-pdmin="${m}">${m}분</button>`).join('')}</div>
+    ${custEnd ? '' : `<div class="chips small-chips">${DONE_MINS.map(m => `<button class="chip-btn ${f.min === m ? 'on' : ''}" data-pdmin="${m}">${m}분</button>`).join('')}</div>`}
     <div class="muted small">시작</div>
     <div class="chips small-chips">${schip('null', '모름') + (p && p.start ? schip('sched', `약속 시각 ${p.start}`) : '') + schip('custom', '직접')}</div>
-    ${sp === 'custom' ? `<input class="field pd-start" type="time" aria-label="시작한 시각" value="${esc(f.sHm || '')}">` : ''}${preview}
+    ${sp === 'custom' ? `<input class="field pd-start" type="time" aria-label="시작한 시각" value="${esc(f.sHm || '')}">` : ''}${endRow}${preview}
     <label class="p-small"><input type="checkbox" data-pdsmall ${f.size === 'small' ? 'checked' : ''}> 작게 했어요</label>
     <div class="row"><button class="btn" data-act="pdone-cancel">그만두기</button><button class="btn primary" data-act="pdone-save">저장</button></div></div>`;
 }
 async function savePromiseDone() {
   const f = state.pdone, p = f && findPromise(f.id); if (!p) { state.pdone = null; return; }
   if (f.sPick === 'custom' && !f.sHm) { toast('시작한 시각을 골라 주세요'); return; }
-  const { startAt, endAt } = pdoneTimes(f, p);
+  if (f.sPick && f.ePick === 'custom' && !f.eHm) { toast('끝난 시각을 골라 주세요'); return; }
+  const { startAt, endAt, min, bad } = pdoneTimes(f, p);
+  if (bad) { toast('12시간보다 길어요. 시각을 확인해 주세요'); return; }
   if ((endAt || startAt || 0) > Date.now() + 60000) { toast('아직 오지 않은 시각이에요'); return; }
   state.pdone = null;
   stampFx(p);
-  await record('promise-result', { id: p.id, kind: p.kind, name: pName(p), date: p.date, startAt, endAt, min: f.min || null, size: f.size, note: f.note.trim(), manual: true });
+  await record('promise-result', { id: p.id, kind: p.kind, name: pName(p), date: p.date, startAt, endAt, min, size: f.size, note: f.note.trim(), manual: true });
   await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
   syncPromisePush();
 }
@@ -1595,8 +1609,9 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'pskip-open') { state.pdone = null; state.pfix = null; state.pskip = { id: d.id, reason: '' }; drawPromises(); const el = [...document.querySelectorAll('.pskip-reason')].find(x => x.offsetParent); if (el) el.focus(); return; }   // 약속 카드는 처음 화면과 기록 화면에 함께 그려진다
   if (d.act === 'pskip-cancel') { state.pskip = null; drawPromises(); return; }
   if (d.act === 'pskip-save') { await savePromiseSkip(); return; }
-  if (d.act === 'pdone-open') { state.pskip = null; state.pfix = null; state.pdone = { id: d.id, min: 0, size: 'full', note: '', sPick: null, sHm: '' }; drawPromises(); return; }
+  if (d.act === 'pdone-open') { state.pskip = null; state.pfix = null; state.pdone = { id: d.id, min: 0, size: 'full', note: '', sPick: null, sHm: '', ePick: null, eHm: '' }; drawPromises(); return; }
   if (d.pdspick !== undefined && state.pdone) { state.pdone.sPick = d.pdspick === 'null' ? null : d.pdspick; drawPromises(); return; }
+  if (d.pdepick !== undefined && state.pdone) { state.pdone.ePick = d.pdepick === 'null' ? null : d.pdepick; drawPromises(); return; }
   if (d.act === 'pfix-open') { openPromiseFix(d.id); drawPromises(); return; }
   if (d.act === 'pfix-cancel') { state.pfix = null; drawPromises(); return; }
   if (d.act === 'pfix-save') { await savePromiseFix(); drawPromises(); return; }
@@ -1731,6 +1746,7 @@ $('#main').addEventListener('change', e => {
   if (e.target.dataset.pdsmall !== undefined && state.pdone) { state.pdone.size = e.target.checked ? 'small' : 'full'; return; }
   if (e.target.dataset.pfsmall !== undefined && state.pfix) { state.pfix.size = e.target.checked ? 'small' : 'full'; return; }
   if (e.target.classList.contains('pd-start') && state.pdone) { state.pdone.sHm = e.target.value; drawPromises(); return; }
+  if (e.target.classList.contains('pd-end') && state.pdone) { state.pdone.eHm = e.target.value; drawPromises(); return; }
   if (e.target.classList.contains('pf-start') && state.pfix) { state.pfix.s = e.target.value; return; }
   if (e.target.classList.contains('pf-end') && state.pfix) { state.pfix.e = e.target.value; return; }
   if (e.target.id === 'pr-start') {
