@@ -272,8 +272,17 @@ dialog h3 { margin: 14px 0 8px; }
   font-style: normal; font-size: 9.5px; line-height: 1.05; font-weight: 800; text-align: center; color: var(--stamp); box-sizing: border-box; }
 .wk-cell.today .wk-stamp { border-color: var(--muted); }
 .wk-stamp.fut { border-color: transparent; background: var(--grass-0); opacity: .5; }
-.wk-stamp.on { border: 3px double var(--stamp); background: rgba(214, 69, 61, .06); transform: rotate(-12deg); }
-.wk-stamp.on.soft { opacity: .5; }
+/* v32 — 스마일 도장 */
+:root { --smile-face: #ffd23f; --smile-line: #2b2b2b; --smile-cheek: #f6a19a; }
+.wk-stamp.on { border: 0; background: none; transform: rotate(-8deg); animation: wk-pop .35s cubic-bezier(.2, 1.4, .4, 1) both; }
+.wk-stamp.on.soft { opacity: .45; }
+.wk-stamp svg { width: 100%; height: 100%; display: block; }
+.wk-stamp .sm-face { fill: var(--smile-face); stroke: var(--smile-line); stroke-width: 2.2; }
+.wk-stamp .sm-cheek { fill: var(--smile-cheek); }
+.wk-stamp .sm-eye { fill: var(--smile-line); }
+.wk-stamp .sm-mouth { fill: none; stroke: var(--smile-line); stroke-width: 2; stroke-linecap: round; }
+@keyframes wk-pop { from { transform: scale(.4) rotate(-8deg); opacity: 0; } to { transform: scale(1) rotate(-8deg); opacity: 1; } }
+.wk-stamp.on.soft { animation: none; }
 
 /* 🧺 어제 | 오늘 | 내일 (앱 v25) */
 :root { --logday-off: var(--orange); --logday-off-soft: var(--orange-soft); }

@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v31';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v32';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -1330,7 +1330,12 @@ function promiseHist(p) {
   const bits = [lastText, week ? `이번 주 ${week}회` : ''].filter(Boolean).join(' · ');
   return bits ? `<p class="p-hist">${esc(bits)}</p>` : '';
 }
-// 이번 주 도장 (앱 v31, 2026-11-09 호호 요청) — 월~일 7칸, 약속을 하나라도 지킨 날은 💮 도장.
+// 스마일 도장 (앱 v32) — 노란 얼굴 + 볼터치. 색은 style.css의 --smile-* 토큰
+const SMILE = '<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="20" r="17.5" class="sm-face"/>'
+  + '<ellipse cx="11" cy="23" rx="4" ry="2.8" class="sm-cheek"/><ellipse cx="29" cy="23" rx="4" ry="2.8" class="sm-cheek"/>'
+  + '<circle cx="14.5" cy="17" r="2" class="sm-eye"/><circle cx="25.5" cy="17" r="2" class="sm-eye"/>'
+  + '<path d="M16 24.5 Q20 28.5 24 24.5" class="sm-mouth"/></svg>';
+// 이번 주 도장 (앱 v31, 2026-11-09 호호 요청) — 월~일 7칸, 약속을 하나라도 지킨 날은 스마일 도장(v32).
 // 작게만 한 날은 연한 도장. 안 한 날·남은 날은 빈 동그라미 — 끊긴 날을 따로 알리지 않는다
 function promiseGrass() {
   const all = promiseResults(), t = today(), mon = addDaysStr(t, -((wdOf(t) + 6) % 7)), cells = [];
@@ -1340,9 +1345,9 @@ function promiseGrass() {
     const n = rs.reduce((sum, r) => sum + (r.size === 'small' ? 0.5 : 1), 0);
     if (n) days++;
     const cls = n >= 1 ? 'on' : n > 0 ? 'on soft' : d > t ? 'fut' : '';
-    cells.push(`<div class="wk-cell${d === t ? ' today' : ''}"><i class="wk-stamp ${cls}" title="${d} · ${n}개">${n ? '참<br>잘함' : ''}</i><span>${WD[wdOf(d)]}</span></div>`);
+    cells.push(`<div class="wk-cell${d === t ? ' today' : ''}"><i class="wk-stamp ${cls}" title="${d} · ${n}개">${n ? SMILE : ''}</i><span>${WD[wdOf(d)]}</span></div>`);
   }
-  return `<div class="p-week" role="img" aria-label="이번 주 약속 도장 ${days}일"><p class="p-week-h muted small">이번 주 도장 ${days ? `<b>${days}일</b>` : ''}</p><div class="p-week-row">${cells.join('')}</div></div>`;
+  return `<div class="p-week" role="img" aria-label="이번 주 약속 도장 ${days}일"><p class="p-week-h muted small">이번 주 스마일 ${days ? `<b>${days}일</b>` : ''}</p><div class="p-week-row">${cells.join('')}</div></div>`;
 }
 // [✓ 했어요] — 시작을 누르지 않고 먼저 한 약속(US-205). 시작 시각은 선택(US-302): 시작 + 분이 있으면 끝을 계산해 타임라인에 들어간다
 const DONE_MINS = [15, 30, 60, 90, 120];
