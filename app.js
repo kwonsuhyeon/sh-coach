@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v32';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v33';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -1319,7 +1319,9 @@ function promiseRow(p) {
   const cls = st.s === 'open' ? 'open' : st.s === 'past' ? 'past' : '';
   return `<div class="p-now ${cls}"><span class="p-now-t">${name}</span><span class="p-now-w">${st.s === 'open' ? '지금 · ' : ''}${p.start}~${p.end}</span></div>${did}${form}`;
 }
-function promiseRows(date, ps) { return date <= today() && ps.length ? `<div class="p-rows">${ps.map(p => promiseRow(p) + promiseHist(p)).join('')}</div>${date === today() ? promiseGrass() : ''}` : ''; }
+// 지난번 줄은 약속 이름 바로 아래에 붙인다(v33) — 버튼 아래 오른쪽에 두면 다음 약속 것처럼 보였다
+function withHist(html, hist) { const i = html.indexOf('</div>') + 6; return hist ? html.slice(0, i) + hist + html.slice(i) : html; }
+function promiseRows(date, ps) { return date <= today() && ps.length ? `<div class="p-rows">${ps.map(p => withHist(promiseRow(p), promiseHist(p))).join('')}</div>${date === today() ? promiseGrass() : ''}` : ''; }
 // 지난번 10.29 · 40분 · 이번 주 2회 (US-209) — 기록이 없으면 줄을 뺀다
 function promiseHist(p) {
   const mine = promiseResults().filter(r => r.kind === p.kind);

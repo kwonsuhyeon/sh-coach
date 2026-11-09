@@ -260,7 +260,7 @@ dialog h3 { margin: 14px 0 8px; }
 
 /* 💚 지난 기록 · 14일 잔디 · 한 일의 약속 줄 (앱 v23) */
 :root { --grass-0: #eeeeea; --grass-1: #bfe3cd; --grass-2: #6dbb8d; --grass-3: var(--promise); }
-.p-hist { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-align: right; }
+.p-hist { margin: -2px 0 8px; font-size: 12px; color: var(--muted); text-align: left; }
 /* 이번 주 도장 (앱 v31) — 14일 잔디 대신 월~일 7칸 */
 .p-week { margin-top: 12px; }
 .p-week-h { margin: 0 0 6px; }
