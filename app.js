@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v30';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v31';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -1330,14 +1330,19 @@ function promiseHist(p) {
   const bits = [lastText, week ? `이번 주 ${week}회` : ''].filter(Boolean).join(' · ');
   return bits ? `<p class="p-hist">${esc(bits)}</p>` : '';
 }
-// 최근 14일 잔디 — 지킨 약속 수만큼 진해진다(작게 한 약속은 0.5). 끊긴 날을 따로 알리지 않는다
+// 이번 주 도장 (앱 v31, 2026-11-09 호호 요청) — 월~일 7칸, 약속을 하나라도 지킨 날은 💮 도장.
+// 작게만 한 날은 연한 도장. 안 한 날·남은 날은 빈 동그라미 — 끊긴 날을 따로 알리지 않는다
 function promiseGrass() {
-  const all = promiseResults(), t = today(), cells = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = addDaysStr(t, -i), n = all.filter(r => r.date === d).reduce((sum, r) => sum + (r.size === 'small' ? 0.5 : 1), 0);
-    cells.push(`<i class="lv${Math.min(3, Math.ceil(n))}" title="${d} · ${n}개"></i>`);
+  const all = promiseResults(), t = today(), mon = addDaysStr(t, -((wdOf(t) + 6) % 7)), cells = [];
+  let days = 0;
+  for (let i = 0; i < 7; i++) {
+    const d = addDaysStr(mon, i), rs = all.filter(r => r.date === d);
+    const n = rs.reduce((sum, r) => sum + (r.size === 'small' ? 0.5 : 1), 0);
+    if (n) days++;
+    const cls = n >= 1 ? 'on' : n > 0 ? 'on soft' : d > t ? 'fut' : '';
+    cells.push(`<div class="wk-cell${d === t ? ' today' : ''}"><i class="wk-stamp ${cls}" title="${d} · ${n}개">${n ? '참<br>잘함' : ''}</i><span>${WD[wdOf(d)]}</span></div>`);
   }
-  return `<div class="p-grass" role="img" aria-label="최근 14일 지킨 약속"><span class="muted small">14일</span>${cells.join('')}</div>`;
+  return `<div class="p-week" role="img" aria-label="이번 주 약속 도장 ${days}일"><p class="p-week-h muted small">이번 주 도장 ${days ? `<b>${days}일</b>` : ''}</p><div class="p-week-row">${cells.join('')}</div></div>`;
 }
 // [✓ 했어요] — 시작을 누르지 않고 먼저 한 약속(US-205). 시작 시각은 선택(US-302): 시작 + 분이 있으면 끝을 계산해 타임라인에 들어간다
 const DONE_MINS = [15, 30, 60, 90, 120];

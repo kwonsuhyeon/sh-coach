@@ -261,12 +261,19 @@ dialog h3 { margin: 14px 0 8px; }
 /* 💚 지난 기록 · 14일 잔디 · 한 일의 약속 줄 (앱 v23) */
 :root { --grass-0: #eeeeea; --grass-1: #bfe3cd; --grass-2: #6dbb8d; --grass-3: var(--promise); }
 .p-hist { margin: 0 0 6px; font-size: 12px; color: var(--muted); text-align: right; }
-.p-grass { display: grid; grid-template-columns: auto repeat(14, 1fr); gap: 3px; align-items: center; margin-top: 10px; }
-.p-grass span { margin-right: 4px; }
-.p-grass i { display: block; aspect-ratio: 1; border-radius: 3px; background: var(--grass-0); }
-.p-grass i.lv1 { background: var(--grass-1); }
-.p-grass i.lv2 { background: var(--grass-2); }
-.p-grass i.lv3 { background: var(--grass-3); }
+/* 이번 주 도장 (앱 v31) — 14일 잔디 대신 월~일 7칸 */
+.p-week { margin-top: 12px; }
+.p-week-h { margin: 0 0 6px; }
+.p-week-h b { color: var(--stamp); }
+.p-week-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.wk-cell { display: grid; justify-items: center; gap: 3px; font-size: 12px; color: var(--muted); }
+.wk-cell.today span { color: var(--ink); font-weight: 700; }
+.wk-stamp { display: grid; place-items: center; width: 100%; max-width: 40px; aspect-ratio: 1; border-radius: 50%; border: 2px dashed var(--grass-0);
+  font-style: normal; font-size: 9.5px; line-height: 1.05; font-weight: 800; text-align: center; color: var(--stamp); box-sizing: border-box; }
+.wk-cell.today .wk-stamp { border-color: var(--muted); }
+.wk-stamp.fut { border-color: transparent; background: var(--grass-0); opacity: .5; }
+.wk-stamp.on { border: 3px double var(--stamp); background: rgba(214, 69, 61, .06); transform: rotate(-12deg); }
+.wk-stamp.on.soft { opacity: .5; }
 
 /* 🧺 어제 | 오늘 | 내일 (앱 v25) */
 :root { --logday-off: var(--orange); --logday-off-soft: var(--orange-soft); }
