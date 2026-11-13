@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v34';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v35';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -135,6 +135,7 @@ async function record(type, payload = {}, date = today()) {   // date: 🧺 어�
   await idb.putEvent(ev);
   render();
   flush();
+  if (CALM_TYPES.includes(type)) syncPromisePush();   // 기록이 생긴 날의 🌿 조용한 날 알림을 지운다
   return ev;
 }
 
@@ -554,6 +555,19 @@ function moveAlarms(date) {   // date = 학교 가는 날
   if (t <= Date.now() + PUSH_LEAD_MS || t >= Date.now() + PUSH_MAX_MS) return [];
   return [{ t, priority: 3, title: '🚌 내일은 셔틀 기본이에요', message: `차 탈 거면 눌러서 바꿔 주세요 · 내일 ${dt.emoji} ${dt.name}`, tags: ['bus'] }];
 }
+// 🌿 조용한 날 알림 (앱 v35): 오늘부터 CALM_DAYS일 치를 CALM_HM에 한 건씩 미리 걸고, 그날 기록이 생기면 지운다.
+// PC 없이 "기록이 없는 날"을 아는 방법 — 2시에 확인하는 게 아니라 걸어 둔 알림을 기록이 취소한다. 누르면 #calm → 쉬기(한 줄 일기 + 기쁨 목록)
+const CALM_HM = '14:00', CALM_DAYS = 3;
+const CALM_TYPES = ['did', 'memo', 'quick', 'joy', 'body', 'rest-choose', 'rest-done', 'promise-start', 'promise-result', 'research-step'];
+function calmAlarms(date) {
+  const t = new Date(`${date}T${CALM_HM}:00`).getTime();
+  if (t <= Date.now() + PUSH_LEAD_MS || t >= Date.now() + PUSH_MAX_MS) return [];
+  return [{ t, priority: 3, title: '🌿 오늘 조용하네요', message: '한 줄만 적어 볼까요? 기쁨 하나 골라도 좋아요', tags: ['herb'] }];
+}
+function hasRecord(events, date) {   // 폰 기록 + 요약에 실린 PC 기록(한 일·메모)
+  const d = state.snap && state.snap.days && state.snap.days[date];
+  return events.some(e => e.date === date && CALM_TYPES.includes(e.type)) || !!(d && ((d.did || []).length || String(d.memo || '').trim()));
+}
 let pushSyncing = null;
 function syncPromisePush() {
   if (pushSyncing) return pushSyncing.then(() => syncPromisePush());   // 겹쳐 돌면 같은 알림이 두 번 걸린다
@@ -572,6 +586,9 @@ function syncPromisePush() {
           : { date, sig: `${p.date} ${p.start}-${p.end}`, alarms: () => promiseAlarms(p), click: `#promise/${p.id}` };
       }
       if (dayType(date) && !mv && date > t) want[`move-${date}`] = { date, sig: 'move', alarms: () => moveAlarms(date), click: `#move/${date}` };
+    }
+    for (const date of Array.from({ length: CALM_DAYS }, (_, n) => addDaysStr(t, n))) {
+      if (!hasRecord(events, date)) want[`calm-${date}`] = { date, sig: 'calm', alarms: () => calmAlarms(date), click: '#calm' };
     }
     const saved = ls.get('promisePush') || {};
     for (const id of Object.keys(saved)) {
@@ -863,18 +880,23 @@ function restPickBtn(c) {
 // ✨ 기쁨 목록 (앱 v34, wiki/coach/joys.md → 요약 joys) — 에너지·시간을 고르기 전에도 보인다. 누르면 그 줄이 쉼 이름으로 시작
 const JOY_SHOW = 4;
 function drawRestJoys() {
-  const box = $('#rest-joys');
+  const box = $('#rest-joys'), r = state.rest;
   const all = (state.snap && state.snap.joys) || [];
-  if (!all.length) { box.innerHTML = ''; return; }
-  const r = state.rest;
-  if (!r.joys || r.joys.some(i => !all[i])) {
+  if (all.length && (!r.joys || r.joys.some(i => !all[i]))) {
     const idx = all.map((_, i) => i);
     for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
     r.joys = idx.slice(0, JOY_SHOW);
   }
-  box.innerHTML = `<h2>✨ 기쁨 목록</h2><p class="muted small">하나 골라서 지금 하기</p><div class="pick">
+  const old = $('#calm-memo'), draft = old ? old.value : '';   // 칩을 눌러 다시 그려도 쓰던 글은 남긴다
+  // ✍️ 한 줄 일기 (앱 v35) — 기쁨을 고를 기운도 없는 날의 가장 낮은 문턱. 🌿 조용한 날 알림(#calm)으로 오면 펼쳐져 있다
+  const diary = r.diary ? `<h2>✍️ 한 줄 일기</h2><p class="muted small">한 줄이면 오늘은 기록한 날이에요</p><textarea id="calm-memo" rows="2" placeholder="지금 마음 한 줄"></textarea>
+    <button class="btn primary mt" data-act="calm-save">남기기</button><hr class="joy-sep">` : '';
+  const list = all.length ? `<h2>✨ 기쁨 목록</h2><p class="muted small">하나 골라서 지금 하기</p><div class="pick">
     ${r.joys.map(i => `<button class="pick-btn" data-label="${esc(all[i].text)}"><b>${esc(all[i].text)}</b>${all[i].group ? `<span class="pick-sub">${esc(all[i].group)}</span>` : ''}</button>`).join('')}
-    </div>${all.length > JOY_SHOW ? '<button class="link mt" data-act="joy-shuffle">🔀 다른 기쁨 보기</button>' : ''}<hr class="joy-sep">`;
+    </div>${all.length > JOY_SHOW ? '<div class="mt"><button class="link" data-act="joy-shuffle">🔀 다른 기쁨 보기</button></div>' : ''}` : '';
+  const ask = r.diary ? '' : '<div class="mt"><button class="link" data-act="calm-open">✍️ 고르기 어려우면 일기라도 한 줄 써 봐요</button></div>';
+  box.innerHTML = `${diary}${list}${ask}<hr class="joy-sep">`;
+  if (draft && $('#calm-memo')) $('#calm-memo').value = draft;
 }
 function drawRest() {
   const r = state.rest;
@@ -1108,6 +1130,7 @@ function routeHash() {
   const h = decodeURIComponent(location.hash.replace('#', ''));
   if (h.startsWith('promise/')) { openPromise(h.slice(8)); return true; }
   if (h.startsWith('move/')) { location.hash = ''; return true; }
+  if (h === 'calm') { state.rest = { ...state.rest, diary: true }; location.hash = '#rest'; return true; }   // 🌿 조용한 날 알림 → 한 줄 일기가 펼쳐진 쉬기
   return false;
 }
 async function startPrun() {
@@ -1676,6 +1699,12 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
   // 쉬기
   if (d.act === 'joy-shuffle') { state.rest.joys = null; drawRest(); return; }
+  if (d.act === 'calm-open') { state.rest.diary = true; drawRest(); const el = $('#calm-memo'); if (el) el.focus(); return; }
+  if (d.act === 'calm-save') {
+    const el = $('#calm-memo'), text = el ? el.value.trim() : '';
+    if (!text) { toast('한 줄만 적어 주세요'); return; }
+    await record('memo', { text }); el.value = ''; state.rest.diary = false; drawRest(); toast('✍️ 남겼어요. 오늘은 기록한 날이에요'); return;
+  }
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
   if (b.closest('#rest-time')) { state.rest.time = +d.v; drawRest(); return; }
   if (d.restAct || d.label) {
@@ -1900,6 +1929,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
     const q = new URLSearchParams(location.search);
     if (q.get('flow')) { const k = guessKind(q.get('flow')); state.flow = { isNew: true, tid: 't_demoX', title: q.get('flow'), kind: k, obstacle: q.get('ob') || '', device: 'phone', steps: buildSteps(k, q.get('ob') || '', 'phone'), edited: false, choosing: q.get('choose') || null }; }
     if (q.get('rest')) { const [en, tm] = q.get('rest').split('-'); state.rest = { energy: en, time: +tm }; }
+    if (q.get('diary')) state.rest.diary = true;   // &diary=1 → 한 줄 일기 펼침
     // 타이머 확인용: &sec=N (실행·쉼 타이머를 N초로) · &phase=run (카운트다운 건너뜀) · &delays=N · &end=1 (쉼 시간 다 됨) · &back=1 (쉼 → 일 전환 카드)
     state.demoSec = +q.get('sec') || 0;
     if (q.get('tab')) ls.set('quickTab', q.get('tab'));   // &tab=몸 → 기록 카드의 그 탭
