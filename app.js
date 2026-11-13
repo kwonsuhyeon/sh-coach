@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v33';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v34';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -860,6 +860,22 @@ function restPickBtn(c) {
   return `<button class="pick-btn" data-rest-act="${esc(c.a.id)}" data-short="${c.short ? 1 : ''}"><b>${esc(c.a.name)}${c.short ? ' · 작게' : ''}</b>
     <span class="pick-sub">${esc(c.steps[0].text)}부터${c.short ? '' : c.a.min ? ` · ${c.a.min}분` : ''}${rc}</span></button>`;
 }
+// ✨ 기쁨 목록 (앱 v34, wiki/coach/joys.md → 요약 joys) — 에너지·시간을 고르기 전에도 보인다. 누르면 그 줄이 쉼 이름으로 시작
+const JOY_SHOW = 4;
+function drawRestJoys() {
+  const box = $('#rest-joys');
+  const all = (state.snap && state.snap.joys) || [];
+  if (!all.length) { box.innerHTML = ''; return; }
+  const r = state.rest;
+  if (!r.joys || r.joys.some(i => !all[i])) {
+    const idx = all.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+    r.joys = idx.slice(0, JOY_SHOW);
+  }
+  box.innerHTML = `<h2>✨ 기쁨 목록</h2><p class="muted small">하나 골라서 지금 하기</p><div class="pick">
+    ${r.joys.map(i => `<button class="pick-btn" data-label="${esc(all[i].text)}"><b>${esc(all[i].text)}</b>${all[i].group ? `<span class="pick-sub">${esc(all[i].group)}</span>` : ''}</button>`).join('')}
+    </div>${all.length > JOY_SHOW ? '<button class="link mt" data-act="joy-shuffle">🔀 다른 기쁨 보기</button>' : ''}<hr class="joy-sep">`;
+}
 function drawRest() {
   const r = state.rest;
   const now = ls.get('resting');
@@ -878,6 +894,7 @@ function drawRest() {
         : `<div class="row"><button class="btn" data-act="rest-close">그냥 닫기</button><button class="btn primary" data-act="rest-end">끝났어요</button></div>`}`;
     return;
   }
+  drawRestJoys();
   document.querySelectorAll('#rest-energy .chip-btn').forEach(b => b.classList.toggle('on', b.dataset.v === r.energy));
   document.querySelectorAll('#rest-time .chip-btn').forEach(b => b.classList.toggle('on', b.dataset.v === String(r.time)));
   const box = $('#rest-suggest');
@@ -1658,6 +1675,7 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'promise-cancel') { state.pedit = null; delete (state.pdrafts || {})[d.date]; drawPromises(); return; }
   if (d.act === 'redo') { const t = tasksNow().find(x => x.id === d.tid); if (t) { openFlow(t); location.hash = '#start'; } return; }
   // 쉬기
+  if (d.act === 'joy-shuffle') { state.rest.joys = null; drawRest(); return; }
   if (b.closest('#rest-energy')) { state.rest.energy = d.v; drawRest(); return; }
   if (b.closest('#rest-time')) { state.rest.time = +d.v; drawRest(); return; }
   if (d.restAct || d.label) {

@@ -302,3 +302,4 @@ dialog h3 { margin: 14px 0 8px; }
 .p-now.open .p-now-w { color: var(--promise); font-weight: 600; }
 .p-done-time { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .p-result .chips + .muted.small, .p-result .field + .muted.small { margin-top: 10px; }
+.joy-sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
