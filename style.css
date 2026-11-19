@@ -303,3 +303,39 @@ dialog h3 { margin: 14px 0 8px; }
 .p-done-time { margin: 0; font-weight: 600; font-variant-numeric: tabular-nums; }
 .p-result .chips + .muted.small, .p-result .field + .muted.small { margin-top: 10px; }
 .joy-sep { border: 0; border-top: 1px solid var(--line); margin: 16px 0; }
+
+/* ===== v36: 🎯 오늘 할 일 · 💧 물 한 줄 · 📄 논문 읽은 날 · 📉 몸 탭 그래프 ===== */
+:root { --trend-line: var(--blue); --trend-path: var(--orange); --trend-grid: var(--line); --dot-on: var(--promise); --dot-off: var(--grass-0); --dot-size: 16px; }
+.card.today h2 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.card.today .goals { margin-bottom: 10px; }
+.card.today .goals li span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.t-move { flex: none; white-space: nowrap; color: var(--muted); }
+.water-line { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; padding: 6px 8px 6px 16px;
+  background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); font-size: 15px; }
+.water-line b { font-size: 17px; color: var(--blue); }
+#body-trend { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.bt-h { margin: 0 0 2px; font-size: 15px; }
+.bt-legend { margin: 0 0 6px; }
+.bt-k { white-space: nowrap; }
+.bt-svg { display: block; width: 100%; height: auto; }
+.bt-grid { stroke: var(--trend-grid); stroke-width: 1; }
+.bt-tick { fill: var(--muted); font-size: 10px; }
+.bt-line { fill: none; stroke: var(--trend-line); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.bt-pt { fill: var(--card); stroke: var(--trend-line); stroke-width: 2; }
+.bt-pt.now { fill: var(--trend-line); }
+.bt-now-t { fill: var(--trend-line); font-size: 11px; font-weight: 700; }
+.bt-path { stroke: var(--trend-path); stroke-width: 1.6; stroke-dasharray: 3 4; stroke-linecap: round; }
+.bt-goal { fill: var(--card); stroke: var(--trend-path); stroke-width: 2; }
+.bt-goal-t { fill: var(--trend-path); font-size: 11px; font-weight: 700; }
+.bt-sum { margin: 6px 0 12px; color: var(--muted); }
+.bt-sum b { color: var(--ink); font-size: 15px; }
+.bt-rows { display: grid; gap: 8px; }
+.bt-row { display: grid; grid-template-columns: minmax(0, 1fr) auto 44px; align-items: center; gap: 8px; font-size: 14px; }
+.bt-dots { display: grid; grid-template-columns: repeat(7, var(--dot-size)); gap: 4px; }
+.bt-dot { width: var(--dot-size); height: var(--dot-size); border-radius: 50%; border: 2px solid var(--dot-off); box-sizing: border-box; }
+.bt-dot.on { background: var(--dot-on); border-color: var(--dot-on); }
+.bt-dot.fut { border: 0; background: var(--dot-off); transform: scale(.4); }
+.bt-wd { font-style: normal; font-size: 11px; color: var(--muted); text-align: center; }
+.bt-wd.today { color: var(--ink); font-weight: 700; }
+.bt-n { text-align: right; font-size: 14px; }
+.paper-week { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }

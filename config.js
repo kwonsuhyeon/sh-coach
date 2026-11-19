@@ -9,5 +9,6 @@ window.COACH_CONFIG = (() => {
     // 앱 폴더(Apps/sh-coach) 안의 기준 경로. 개발 서버에서는 /test 아래만 써서 실제 기록과 섞이지 않게 한다.
     COACH_ROOT: local ? '/test' : '',
     DAY_CUTOFF_H: 3,   // daily-wiki와 같은 규칙: 새벽 3시 전은 어제
+    WATER_GOAL: 7,     // 하루 물 목표(잔) — PC 요약 trend.waterGoal이 오면 그 값이 우선
   };
 })();

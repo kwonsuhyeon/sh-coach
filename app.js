@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v35';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v36';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -765,6 +765,51 @@ async function saveBody() {
   await record('body', diff, date); toast('💪 남겼어요');
 }
 
+// 📉 몸 탭 그래프 (앱 v36, 2026-11-20) — 요약 trend(PC가 계산)만 그린다. 하루 숫자는 그리지 않고 주 평균 점 + 목표까지 가는 점선.
+// 아래 세 줄 = 이번 주 물·걸음·운동을 채운 날. 색·크기는 style.css의 .bt-* (인라인 style은 CSP가 막는다)
+const TREND = { w: 320, h: 150, l: 30, r: 14, t: 12, b: 22 };
+const dayNum = date => Math.round(new Date(date + 'T12:00:00').getTime() / 86400000);
+function drawBodyTrend() {
+  const box = $('#body-trend'), tr = state.snap && state.snap.trend;
+  if (!tr) { box.innerHTML = ''; return; }
+  const t = today(), pts = (tr.weeks || []).filter(w => w.avg != null).map(w => ({ x: dayNum(w.mon) + 3, y: w.avg, mon: w.mon }));
+  let svg = '';
+  if (pts.length) {
+    const p = tr.path, x0 = dayNum(tr.weeks[0].mon), x1 = Math.max(p ? dayNum(p.to) : 0, dayNum(t)) + 2;
+    const ys = pts.map(q => q.y).concat(p ? [p.fromKg, p.toKg] : []), y0 = Math.floor(Math.min(...ys) - 0.3), y1 = Math.ceil(Math.max(...ys) + 0.3);
+    const X = x => TREND.l + (x - x0) / (x1 - x0) * (TREND.w - TREND.l - TREND.r), Y = y => TREND.t + (y1 - y) / (y1 - y0) * (TREND.h - TREND.t - TREND.b);
+    const f = n => n.toFixed(1), md = date => `${+date.slice(5, 7)}/${+date.slice(8)}`;
+    for (let y = y0; y <= y1; y++) svg += `<line class="bt-grid" x1="${TREND.l}" x2="${TREND.w - TREND.r}" y1="${f(Y(y))}" y2="${f(Y(y))}"/><text class="bt-tick" x="${TREND.l - 5}" y="${f(Y(y) + 3.5)}" text-anchor="end">${y}</text>`;
+    const ticks = [tr.weeks[0].mon, tr.weeks[Math.floor(tr.weeks.length / 2)].mon, mondayOf(t)].concat(p ? [p.to] : []);
+    for (const d of [...new Set(ticks)]) svg += `<text class="bt-tick" x="${f(X(dayNum(d)))}" y="${TREND.h - 6}" text-anchor="middle">${md(d)}</text>`;
+    if (p) svg += `<line class="bt-path" x1="${f(X(dayNum(p.from)))}" y1="${f(Y(p.fromKg))}" x2="${f(X(dayNum(p.to)))}" y2="${f(Y(p.toKg))}"/>`
+      + `<circle class="bt-goal" cx="${f(X(dayNum(p.to)))}" cy="${f(Y(p.toKg))}" r="5"/><text class="bt-goal-t" x="${f(X(dayNum(p.to)) - 8)}" y="${f(Y(p.toKg) + 4)}" text-anchor="end">${p.toKg}</text>`;
+    svg += `<polyline class="bt-line" points="${pts.map(q => `${f(X(q.x))},${f(Y(q.y))}`).join(' ')}"/>` + pts.map((q, i) => `<circle class="bt-pt${i === pts.length - 1 ? ' now' : ''}" cx="${f(X(q.x))}" cy="${f(Y(q.y))}" r="${i === pts.length - 1 ? 4.5 : 3}"/>`).join('');
+    const last = pts[pts.length - 1];
+    svg += `<text class="bt-now-t" x="${f(X(last.x))}" y="${f(Y(last.y) - 9)}" text-anchor="middle">${last.y.toFixed(1)}</text>`;
+  }
+  const cur = (tr.weeks || []).find(w => w.mon === mondayOf(t)), p = tr.path, bits = [];
+  if (cur && cur.avg != null) {
+    bits.push(`이번 주 <b>${cur.avg.toFixed(1)}</b>`);
+    if (tr.floor7 != null) bits.push(`7일 바닥 ${tr.floor7.toFixed(1)}`);
+    if (p && t >= p.from && t <= p.to) {
+      const want = p.fromKg + (p.toKg - p.fromKg) * (dayNum(t) - dayNum(p.from)) / (dayNum(p.to) - dayNum(p.from)), gap = Math.round((cur.avg - want) * 10) / 10;
+      bits.push(gap > 0 ? `가는 길보다 ${gap.toFixed(1)} 위` : gap < 0 ? `가는 길보다 ${(-gap).toFixed(1)} 아래 👏` : '가는 길 위 👏');
+    }
+  } else bits.push('이번 주 몸무게 기록이 아직 없어요');
+  // 이번 주 행동 — 오늘 값은 PC가 아직 반영하지 않은 내 기록까지
+  const now = bodyNow(t), week = (tr.week || []).map(d => (d.date === t && !d.locked ? { ...d, water: +now.water || d.water || 0, steps: +now.steps || d.steps || 0 } : d));
+  const row = (label, ok, tail) => {
+    const n = week.filter(d => d.date <= t && !d.locked && ok(d)).length;
+    return `<div class="bt-row"><span class="bt-k">${label}</span><span class="bt-dots">${week.map(d => `<i class="bt-dot ${d.date > t ? 'fut' : !d.locked && ok(d) ? 'on' : ''}" title="${d.date}"></i>`).join('')}</span><b class="bt-n">${tail(n)}</b></div>`;
+  };
+  box.innerHTML = `<h3 class="bt-h">📉 몸무게 · 주 평균</h3>${p ? `<p class="muted small bt-legend">점선 = ${+p.to.slice(5, 7)}월 말 ${p.toKg}까지 가는 길</p>` : ''}
+    ${svg ? `<svg class="bt-svg" viewBox="0 0 ${TREND.w} ${TREND.h}" role="img" aria-label="몸무게 주 평균 그래프">${svg}</svg>` : ''}
+    <p class="bt-sum small">${bits.join(' · ')}</p>
+    <div class="bt-rows"><div class="bt-row bt-head"><span class="bt-k"></span><span class="bt-dots">${week.map(d => `<i class="bt-wd${d.date === t ? ' today' : ''}">${WD[wdOf(d.date)]}</i>`).join('')}</span><b class="bt-n"></b></div>
+    ${row(`💧 물 ${tr.waterGoal}잔`, d => d.water >= tr.waterGoal, n => `${n}일`)}${row('👟 걸음', d => d.steps > 0, n => `${n}일`)}${row('🏃 운동', d => d.ex, n => `${n}/${tr.exGoal}회`)}</div>`;
+}
+
 // 목표 탭으로 남긴 목표(quick의 "목표 …" 줄)도 PC 병합 전에 바로 보이게 덧붙인다
 function goalsFor(date) {
   const day = state.snap && state.snap.days && state.snap.days[date];
@@ -774,6 +819,14 @@ function goalsFor(date) {
   for (const e of pendingEvents(['goal-set']).filter(e => e.date === date)) {
     const g = goals.find(x => x.text === e.payload.text);
     if (g) g.done = !!e.payload.done;
+  }
+  // 내일로(앱 v36): 보낸 날에서는 그 줄과 하위 줄을 빼고, 받는 날에는 덧붙인다
+  for (const e of pendingEvents(['goal-move'])) {
+    const text = e.payload.text;
+    if (e.date === date) {
+      const i = goals.findIndex(g => g.text === text);
+      if (i >= 0) { let j = i + 1; while (j < goals.length && (goals[j].depth || 0) > (goals[i].depth || 0)) j++; goals.splice(i, j - i); }
+    } else if (e.payload.to === date && !goals.some(g => g.text === text)) goals.push({ text, done: false });
   }
   return goals;
 }
@@ -801,7 +854,31 @@ function draw() {
 }
 
 // ----- 처음 -----
+// 🎯 오늘 할 일 (앱 v36, 2026-11-20) — 하루 노트 🎯 목표를 처음 화면 맨 위에. ▶ 시작하기 메뉴 자리를 대신한다
+// (10/19~11/19 기록: 시작하기는 11/9부터 0건, 목표는 🧺 안에 있어 안 보였다). 입력 칸은 index.html에 두어 다시 그려도 쓰던 글이 남는다
+function drawToday() {
+  const box = $('#today-card'), date = today();
+  box.hidden = dayLocked(date); if (box.hidden) return;
+  const goals = goalsFor(date).map((g, i) => ({ ...g, i })), groups = [];
+  for (const g of goals) { if (!g.depth || !groups.length) groups.push({ top: g, kids: [] }); else groups[groups.length - 1].kids.push(g); }
+  const left = groups.filter(x => !x.top.done).length;
+  $('#today-count').textContent = groups.length ? (left ? `${left}개 남음` : '다 했어요 👏') : '';
+  const li = (g, move) => `<li class="${g.done ? 'done' : ''} ${g.depth ? 'sub' : ''}"><input type="checkbox" data-ti="${g.i}" ${g.done ? 'checked' : ''} aria-label="${esc(g.text)}"><span>${esc(g.text)}</span>${
+    move ? `<button class="link small t-move" data-tmove="${g.i}">내일로</button>` : ''}</li>`;
+  // 끝낸 일은 아래로 — 남은 일이 먼저 보이게
+  $('#today-list').innerHTML = [...groups.filter(x => !x.top.done), ...groups.filter(x => x.top.done)]
+    .map(x => li(x.top, !x.top.done) + x.kids.map(k => li(k, false)).join('')).join('') || '<li class="muted small">오늘 할 일을 한 줄씩 적어 두면 여기서 체크해요.</li>';
+}
+// 💧 물 한 줄 — 누르면 한 잔. 몸무게는 처음 화면에 두지 않는다(호호 2026-11-20) → 🧺 몸 탭의 그래프
+const waterGoal = () => (state.snap && state.snap.trend && state.snap.trend.waterGoal) || C.WATER_GOAL || 7;
+function drawWater() {
+  const el = $('#water-line'), date = today();
+  el.hidden = dayLocked(date); if (el.hidden) return;
+  const n = +bodyNow(date).water || 0, goal = waterGoal();
+  el.innerHTML = `<span>💧 물 <b>${n}</b>/${goal}잔${n >= goal ? ' ✓' : ''}</span><button class="chip-btn num" data-act="water-plus" aria-label="물 한 잔 더">+</button>`;
+}
 function drawHome() {
+  drawToday(); drawWater();
   drawPromises();
   // 돌아보기: "지금 시작"을 누른 지 30분이 지났는데 아직 돌아보지 않은 할 일 하나
   const rv = openTasks().find(t => t.status === '진행' && t.decidedTs && t.decidedTs < Date.now() - 30 * 60000 &&
@@ -1026,14 +1103,32 @@ async function markDone(tid) {
   toast('완료로 남겼어요 ✓');
 }
 // 📚 오늘의 논문 — 처음 화면 메뉴에서 여는 화면 (v12, 예전엔 ▶ 시작하기 위쪽 카드)
+// 📄 논문 먼저 (앱 v36) — 공부 약속을 적을 때 [📄 논문 먼저 읽었어요]를 누르면 한 일 앞에 이 꼬리표가 붙는다(PC 표·메모에도 그대로).
+// 이번 주 읽은 날 = 꼬리표가 붙은 공부 약속의 날 + 오늘의 논문 [읽었어요]를 누른 날. 처음 화면에는 숫자를 늘리지 않고 논문 화면 안에서만 센다
+const PAPER_TAG = '📄 논문 먼저';
+const isStudyKind = kind => kind === 'study' || /^research\d*$/.test(kind || '');
+const withPaperTag = (note, on) => (on ? PAPER_TAG + (note ? ` · ${note}` : '') : note);
+function paperDays() {
+  const t = today(), mon = mondayOf(t), set = new Set();
+  for (const r of promiseResults()) if (r.date >= mon && r.date <= t && String(r.note || '').includes(PAPER_TAG)) set.add(r.date);
+  for (const e of state.events) if (e.type === 'reading-done' && e.date >= mon && e.date <= t) set.add(e.date);
+  if (state.snap && state.snap.reading && state.snap.reading.readToday) set.add(t);
+  return set;
+}
+function paperWeek() {
+  const t = today(), mon = mondayOf(t), days = paperDays();
+  const cells = Array.from({ length: 7 }, (_, i) => { const d = addDaysStr(mon, i); return `<i class="bt-dot ${days.has(d) ? 'on' : d > t ? 'fut' : ''}" title="${d}"></i>`; }).join('');
+  return `<div class="bt-row paper-week" role="img" aria-label="이번 주 논문 읽은 날 ${days.size}일"><span class="bt-k">📄 이번 주 논문 읽은 날</span><span class="bt-dots">${cells}</span><b class="bt-n">${days.size}일</b></div>`;
+}
 function readingSub() {
-  const r = state.snap && state.snap.reading;
-  if (!(r && r.papers && r.papers.length)) return '오늘 읽을 논문';
-  if (r.readToday || todays('reading-done').length) return '오늘 읽음 ✓';
+  const r = state.snap && state.snap.reading, n = paperDays().size, wk = n ? ` · 이번 주 ${n}일` : '';
+  if (!(r && r.papers && r.papers.length)) return '오늘 읽을 논문' + wk;
+  if (r.readToday || todays('reading-done').length) return '오늘 읽음 ✓' + wk;
   const p = r.papers[0];
-  return `오늘 p.${p.from}~${p.to}${r.progress ? ` · ${r.progress.done}/${r.progress.total}편` : ''}`;
+  return `오늘 p.${p.from}~${p.to}${wk || (r.progress ? ` · ${r.progress.done}/${r.progress.total}편` : '')}`;
 }
 function drawReading() {
+  $('#paper-week').innerHTML = paperWeek();
   const r = state.snap && state.snap.reading;
   if (!(r && r.papers && r.papers.length)) { $('#reading').innerHTML = '<p class="muted">오늘 읽을 논문이 아직 없어요. PC papers-wiki에서 이달의 계보를 정하면 여기에 떠요.</p>'; return; }
   const readEv = todays('reading-done').length > 0;
@@ -1186,7 +1281,7 @@ function pickCustomStart(r, hm) {   // 끝(모르면 종료 누른 때) 앞에 �
 async function savePrunResult(r) {
   const endAt = prunEndAt(r), startAt = prunStartAt(r);
   savePrun(null);   // record → render → drawPromises가 다시 저장하지 않게 먼저 비운다
-  await record('promise-result', { id: r.id, kind: r.kind, name: r.name, date: r.date, startAt, endAt, min: endAt ? prunMin(startAt, endAt) : null, size: r.rSize, note: (r.rNote || '').trim(), manual: false });
+  await record('promise-result', { id: r.id, kind: r.kind, name: r.name, date: r.date, startAt, endAt, min: endAt ? prunMin(startAt, endAt) : null, size: r.rSize, note: withPaperTag((r.rNote || '').trim(), r.rPaper), manual: false });
 }
 // 결과 카드에서 저장하지 않고 떠났으면 그때 고른 값(기본값)으로 남긴다
 function autoSavePrun() {
@@ -1301,6 +1396,7 @@ function prunResultCard(r, k) {
     <p class="muted small">${r.late ? '시작한 지 오래됐어요. 언제 끝났어요?' : '끝'}</p>
     <div class="chips small-chips">${r.late ? chip('custom', '직접') + chip('null', '기억 안 나요') : chip(0, '방금') + chip(15, '15분 전', before(15)) + chip(30, '30분 전', before(30)) + chip('custom', '직접')}</div>${custom}
     <input class="field mt p-note" data-note="prun" maxlength="100" aria-label="무엇을 했어요" placeholder="무엇을 했어요? (비워도 돼요)" value="${esc(r.rNote || '')}">
+    ${isStudyKind(r.kind) ? `<div class="chips small-chips"><button class="chip-btn ${r.rPaper ? 'on' : ''}" data-rpaper>📄 논문 먼저 읽었어요</button></div>` : ''}
     <label class="p-small"><input type="checkbox" data-rsmall ${r.rSize === 'small' ? 'checked' : ''}> 작게 했어요</label>
     <button class="btn primary wide big mt" data-act="prun-save">저장</button></div>`;
 }
@@ -1426,6 +1522,7 @@ function promiseDoneForm(p) {
     <div class="muted small">시작</div>
     <div class="chips small-chips">${schip('null', '모름') + (p && p.start ? schip('sched', `약속 시각 ${p.start}`) : '') + schip('custom', '직접')}</div>
     ${sp === 'custom' ? `<input class="field pd-start" type="time" aria-label="시작한 시각" value="${esc(f.sHm || '')}">` : ''}${endRow}${preview}
+    ${p && isStudyKind(p.kind) ? `<div class="chips small-chips"><button class="chip-btn ${f.paper ? 'on' : ''}" data-pdpaper>📄 논문 먼저 읽었어요</button></div>` : ''}
     <label class="p-small"><input type="checkbox" data-pdsmall ${f.size === 'small' ? 'checked' : ''}> 작게 했어요</label>
     <div class="row"><button class="btn" data-act="pdone-cancel">그만두기</button><button class="btn primary" data-act="pdone-save">저장</button></div></div>`;
 }
@@ -1438,7 +1535,7 @@ async function savePromiseDone() {
   if ((endAt || startAt || 0) > Date.now() + 60000) { toast('아직 오지 않은 시각이에요'); return; }
   state.pdone = null;
   stampFx(p);
-  await record('promise-result', { id: p.id, kind: p.kind, name: pName(p), date: p.date, startAt, endAt, min, size: f.size, note: f.note.trim(), manual: true });
+  await record('promise-result', { id: p.id, kind: p.kind, name: pName(p), date: p.date, startAt, endAt, min, size: f.size, note: withPaperTag(f.note.trim(), f.paper), manual: true });
   await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
   syncPromisePush();
 }
@@ -1563,6 +1660,8 @@ function drawLog() {
   $('#quick').hidden = tab === '몸';
   $('#body-form').hidden = tab !== '몸';
   if (tab === '몸') { readBodyInputs(); drawBodyForm(); }
+  $('#body-trend').hidden = tab !== '몸' || !!off || locked;
+  if (!$('#body-trend').hidden) drawBodyTrend();
   drawDidList();
   const st = weekSteps().sort((a, b) => b.date.localeCompare(a.date));
   $('#steps-card').hidden = !st.length || !!off;
@@ -1662,6 +1761,13 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'pskip-cancel') { state.pskip = null; drawPromises(); return; }
   if (d.act === 'pskip-save') { await savePromiseSkip(); return; }
   if (d.act === 'pdone-open') { state.pskip = null; state.pfix = null; state.pdone = { id: d.id, min: 0, size: 'full', note: '', sPick: null, sHm: '', ePick: null, eHm: '' }; drawPromises(); return; }
+  if (d.pdpaper !== undefined && state.pdone) { state.pdone.paper = !state.pdone.paper; drawPromises(); return; }
+  if (d.rpaper !== undefined) { const r = getPrun(); if (r) { savePrun({ ...r, rPaper: !r.rPaper }); drawPrun(); } return; }
+  if (d.act === 'water-plus') { const n = +bodyNow(today()).water || 0; state.body = null; await record('body', { water: String(Math.min(99, n + 1)) }); return; }
+  if (d.tmove !== undefined) {
+    const g = goalsFor(today())[+d.tmove]; if (!g) return;
+    await record('goal-move', { text: g.text, to: addDaysStr(today(), 1) }); toast('내일 할 일로 옮겼어요'); return;
+  }
   if (d.pdspick !== undefined && state.pdone) { state.pdone.sPick = d.pdspick === 'null' ? null : d.pdspick; drawPromises(); return; }
   if (d.pdepick !== undefined && state.pdone) { state.pdone.ePick = d.pdepick === 'null' ? null : d.pdepick; drawPromises(); return; }
   if (d.act === 'pfix-open') { openPromiseFix(d.id); drawPromises(); return; }
@@ -1859,6 +1965,18 @@ $('#did-list').onchange = async e => {
   if (state.didPick === act) { state.didPick = null; drawDidList(); return; }
   await record('did-undo', { act }, logDate()); toast(`${act} 체크를 풀었어요`);
 };
+$('#today-list').onchange = async e => {
+  const i = +e.target.dataset.ti, g = goalsFor(today())[i];
+  if (g) await record('goal-set', { text: g.text, index: i, done: e.target.checked });
+};
+const addToday = async () => {
+  const text = $('#today-in').value.replace(/\s+/g, ' ').trim(); if (!text) return;
+  if (goalsFor(today()).some(g => g.text === text)) { toast('이미 있는 할 일이에요'); return; }
+  $('#today-in').value = '';
+  await record('quick', { text: `목표 ${text}` });
+};
+$('#btn-today').onclick = addToday;
+$('#today-in').onkeydown = e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addToday(); } };
 $('#goals').onchange = async e => {
   const i = +e.target.dataset.i;
   const date = logDate(), g = goalsFor(date)[i];
@@ -1947,6 +2065,21 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
       const date = q.get('promised') === 'tomorrow' ? addDaysStr(today(), 1) : today();
       const promises = selfcare().filter(c => c.days.includes(wdOf(date)) && c.start).map(c => ({ id: `${date}-${c.id}`, kind: c.id, date, start: c.start, end: c.end, firstStep: '', small: '' }));
       state.events = [{ id: 'demoP', ts: now, date: today(), type: 'promise-set', payload: { date, promises }, sent: true }];
+    }
+    // 앱 v36 확인용: demo-snapshot.json은 날짜가 고정이라 오늘 할 일·몸 추세를 지어낸다(실제 기록 아님) · &pdone=study → 공부 약속의 ✓ 했어요 폼
+    {
+      const t0 = today(), mon = mondayOf(t0), day = state.snap.days[t0] || (state.snap.days[t0] = { goals: [], rest: '', locked: false });
+      if (!day.goals.length) day.goals = [{ text: '배송지 주소 확인', done: false, depth: 0 }, { text: '보고서 3장 쓰기 시작', done: false, depth: 0 }, { text: '연구 결과 정리 위주로', done: false, depth: 1 }, { text: '밖에 나가기', done: true, depth: 0 }];
+      day.body = day.body || { energy: '', mood: '', weight: '', water: '3', steps: '' };
+      if (!state.snap.trend) state.snap.trend = {
+        weeks: [61.2, 61.0, null, 61.3, 61.1, 60.9, 60.9, 60.6, 60.4, 60.5].map((avg, i) => ({ mon: addDaysStr(mon, -7 * (9 - i)), avg, n: avg ? 5 : 0 })), floor7: 60.1,
+        path: { from: addDaysStr(t0, -3), fromKg: 60.6, to: addDaysStr(t0, 40), toKg: 58.5 }, waterGoal: 7, exGoal: 2,
+        week: Array.from({ length: 7 }, (_, i) => ({ date: addDaysStr(mon, i), water: [7, 4, 7, 2, 0, 0, 0][i], steps: [6200, 0, 8100, 10400, 0, 0, 0][i], ex: i === 3 })) };
+      if (q.get('pdone')) {
+        const id = `${t0}-${q.get('pdone')}`;
+        state.events = [{ id: 'demoP', ts: now, date: t0, type: 'promise-set', payload: { date: t0, promises: [{ id, kind: q.get('pdone'), date: t0, start: '20:00', end: '22:00', firstStep: '', small: '' }] }, sent: true }];
+        state.pdone = { id, min: 90, size: 'full', note: '데이터마이닝', sPick: null, sHm: '', ePick: null, eHm: '', paper: true };
+      }
     }
     if (q.get('pwin')) { const dr = promiseDraft(today()); if (dr.rows[+q.get('pwin')]) dr.rows[+q.get('pwin')].open = true; }
     if (q.get('run')) {

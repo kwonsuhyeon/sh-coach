@@ -42,12 +42,17 @@
 
   <!-- ===== 처음: 세 갈래 ===== -->
   <div class="view" id="v-home">
+    <section class="card today" id="today-card">
+      <h2>🎯 오늘 할 일 <span class="muted small" id="today-count"></span></h2>
+      <ul class="goals" id="today-list"></ul>
+      <div class="inline"><input class="field" id="today-in" placeholder="예) 배송지 주소 확인" maxlength="100" enterkeyhint="done"><button class="btn primary" id="btn-today">추가</button></div>
+    </section>
+    <p class="water-line" id="water-line"></p>
     <div id="promise-box"></div>
     <section class="card review" id="review-card" hidden></section>
     <section class="card next" id="next-card" hidden></section>
     <nav class="menu">
       <a class="menu-btn m-rest" href="#rest"><span class="emo">🌿</span><b>쉬기</b><small>지금 상태에 맞는 쉼</small></a>
-      <a class="menu-btn m-start" href="#start"><span class="emo">▶</span><b>시작하기</b><small>할 일을 첫 행동으로</small></a>
       <a class="menu-btn m-paper" href="#paper"><span class="emo">📚</span><b>논문</b><small id="menu-paper-sub">오늘 읽을 논문</small></a>
       <a class="menu-btn m-log" href="#log"><span class="emo">🧺</span><b>정리하기</b><small>기록 · 작은 즐거움 · 목표</small></a>
     </nav>
@@ -84,6 +89,7 @@
   <!-- ===== 📚 오늘의 논문 (v12부터 메뉴에서) ===== -->
   <div class="view" id="v-paper" hidden>
     <section class="card" id="reading-card">
+      <div id="paper-week"></div>
       <div id="reading"></div>
     </section>
   </div>
@@ -113,6 +119,7 @@
       <ul class="goals did-list" id="did-list" hidden></ul>
       <textarea id="quick" rows="2"></textarea>
       <div id="body-form" hidden></div>
+      <div id="body-trend" hidden></div>
       <div class="row">
         <span class="muted small" id="quick-hint"></span>
         <button class="btn primary" id="btn-quick">남기기</button>
