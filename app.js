@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v36';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v37';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -1223,7 +1223,11 @@ async function openPromise(id) {
 // #promise/<id>(알림) · #move/<날짜>(셔틀/차 알림 — 처음 화면 카드에 칩이 있다)
 function routeHash() {
   const h = decodeURIComponent(location.hash.replace('#', ''));
-  if (h.startsWith('promise/')) { openPromise(h.slice(8)); return true; }
+  if (h.startsWith('promise/')) {   // 앱 v37: 알림은 처음 화면 약속 카드로만 연다(시작 기록 없음). 이미 시작해 둔 약속만 이어 보기
+    const id = h.slice(8), cur = getPrun();
+    if (promiseEv('promise-start', id) || (cur && cur.id === id)) openPromise(id); else location.hash = '';
+    return true;
+  }
   if (h.startsWith('move/')) { location.hash = ''; return true; }
   if (h === 'calm') { state.rest = { ...state.rest, diary: true }; location.hash = '#rest'; return true; }   // 🌿 조용한 날 알림 → 한 줄 일기가 펼쳐진 쉬기
   return false;
@@ -1448,9 +1452,8 @@ function promiseRow(p) {
   }
   if (st.s === 'doing') return `<div class="p-now"><span class="p-now-t">${name}</span><span class="p-now-w">${hmOf(st.startAt)} 시작 <button class="link small" data-act="promise-go" data-id="${esc(p.id)}">이어 보기</button></span></div>`;
   if (st.s === 'skip') return `<div class="p-now skip"><span class="p-now-t">${name}</span><span class="p-now-w">안 했어요${st.reason ? ` · ${esc(st.reason)}` : ''} ${redo}</span></div>`;
-  // 오늘 약속 = ▶ 시작 · ✓ 했어요 · 안 했어요 같은 크기 (US-305). 창이 열리기 전에도 시작할 수 있다. 지난 날은 시작 없이
-  const go = p.date === today() ? `<button class="btn" data-act="promise-go" data-id="${esc(p.id)}">▶ 시작</button>` : '';
-  const did = `<div class="row ${go ? 'three' : 'two'} p-acts">${go}<button class="btn" data-act="pdone-open" data-id="${esc(p.id)}">✓ 했어요</button><button class="btn" data-act="pskip-open" data-id="${esc(p.id)}">안 했어요</button></div>`;
+  // 약속 = ✓ 했어요 · 안 했어요 두 개 (앱 v37, 2026-11-21 호호) — ▶ 시작은 거의 안 써서 뺐다. 시간은 CSV 한 곳에서만 센다
+  const did = `<div class="row two p-acts"><button class="btn" data-act="pdone-open" data-id="${esc(p.id)}">✓ 했어요</button><button class="btn" data-act="pskip-open" data-id="${esc(p.id)}">안 했어요</button></div>`;
   const form = state.pdone && state.pdone.id === p.id ? promiseDoneForm(p) : state.pskip && state.pskip.id === p.id ? promiseSkipForm() : '';
   const cls = st.s === 'open' ? 'open' : st.s === 'past' ? 'past' : '';
   return `<div class="p-now ${cls}"><span class="p-now-t">${name}</span><span class="p-now-w">${st.s === 'open' ? '지금 · ' : ''}${p.start}~${p.end}</span></div>${did}${form}`;
@@ -1487,8 +1490,8 @@ function promiseGrass() {
   }
   return `<div class="p-week" role="img" aria-label="이번 주 약속 도장 ${days}일"><p class="p-week-h muted small">이번 주 스마일 ${days ? `<b>${days}일</b>` : ''}</p><div class="p-week-row">${cells.join('')}</div></div>`;
 }
-// [✓ 했어요] — 시작을 누르지 않고 먼저 한 약속(US-205). 시작 시각은 선택(US-302): 시작 + 분이 있으면 끝을 계산해 타임라인에 들어간다
-const DONE_MINS = [15, 30, 60, 90, 120];
+// [✓ 했어요] — 체크만 (앱 v37, 2026-11-21 호호): 분·시각을 고르지 않는다. 시간은 CSV에 따로 적고 있어서 두 번 적는 셈이었고,
+// 시각 없는 약속 분을 브리핑이 CSV 시간에 더해 이중으로 셌다. 한 일 한 줄·📄 논문 먼저·작게만 남긴다
 // 약속 날짜의 HH:MM → ms. 새벽(하루 컷오프 전)은 다음 날 새벽으로 본다
 function dayHmAt(date, hm) {
   if (!hm || !date) return null;
@@ -1496,46 +1499,18 @@ function dayHmAt(date, hm) {
   if (hmMin(hm) < C.DAY_CUTOFF_H * 60) d.setDate(d.getDate() + 1);
   return d.getTime();
 }
-// 끝: ePick = null(분으로 계산) · 'custom'(직접 고른 시각 — 분은 시작~끝으로 다시 센다) (2026-11-04 호호 요청)
-function pdoneTimes(f, p) {
-  const s = f.sPick === 'sched' ? (p && p.start) || '' : f.sPick === 'custom' ? f.sHm || '' : '';
-  const startAt = dayHmAt(p && p.date, s);
-  if (startAt && f.ePick === 'custom') {
-    let endAt = dayHmAt(p && p.date, f.eHm);
-    if (endAt && endAt <= startAt) endAt += 24 * 3600 * 1000;   // 자정을 넘겨 끝난 경우
-    if (endAt && endAt - startAt > MAX_SPAN_MS) return { startAt, endAt: null, min: null, bad: true };
-    return { startAt, endAt, min: endAt ? prunMin(startAt, endAt) : f.min || null };
-  }
-  return { startAt, endAt: startAt && f.min ? startAt + f.min * 60000 : null, min: f.min || null };
-}
 function promiseDoneForm(p) {
-  const f = state.pdone, sp = f.sPick || null, t = pdoneTimes(f, p);
-  const schip = (v, label) => `<button class="chip-btn ${String(sp) === v ? 'on' : ''}" data-pdspick="${v}">${label}</button>`;
-  const preview = t.startAt ? `<p class="small p-done-time">${hmOf(t.startAt)}${t.endAt ? `~${hmOf(t.endAt)} · ${t.min}분` : ' 시작'}</p>` : '';
-  const echip = (v, label) => `<button class="chip-btn ${String(f.ePick || null) === v ? 'on' : ''}" data-pdepick="${v}">${label}</button>`;
-  const endRow = sp ? `<div class="muted small">끝</div>
-    <div class="chips small-chips">${echip('null', '분으로 계산') + echip('custom', '직접')}</div>
-    ${f.ePick === 'custom' ? `<input class="field pd-end" type="time" aria-label="끝난 시각" value="${esc(f.eHm || '')}">` : ''}` : '';
-  const custEnd = sp && f.ePick === 'custom';
+  const f = state.pdone;
   return `<div class="p-done-form"><input class="field p-note" data-note="pdone" maxlength="100" aria-label="무엇을 했어요" placeholder="무엇을 했어요? (비워도 돼요)" value="${esc(f.note)}">
-    ${custEnd ? '' : `<div class="chips small-chips">${DONE_MINS.map(m => `<button class="chip-btn ${f.min === m ? 'on' : ''}" data-pdmin="${m}">${m}분</button>`).join('')}</div>`}
-    <div class="muted small">시작</div>
-    <div class="chips small-chips">${schip('null', '모름') + (p && p.start ? schip('sched', `약속 시각 ${p.start}`) : '') + schip('custom', '직접')}</div>
-    ${sp === 'custom' ? `<input class="field pd-start" type="time" aria-label="시작한 시각" value="${esc(f.sHm || '')}">` : ''}${endRow}${preview}
     ${p && isStudyKind(p.kind) ? `<div class="chips small-chips"><button class="chip-btn ${f.paper ? 'on' : ''}" data-pdpaper>📄 논문 먼저 읽었어요</button></div>` : ''}
     <label class="p-small"><input type="checkbox" data-pdsmall ${f.size === 'small' ? 'checked' : ''}> 작게 했어요</label>
     <div class="row"><button class="btn" data-act="pdone-cancel">그만두기</button><button class="btn primary" data-act="pdone-save">저장</button></div></div>`;
 }
 async function savePromiseDone() {
   const f = state.pdone, p = f && findPromise(f.id); if (!p) { state.pdone = null; return; }
-  if (f.sPick === 'custom' && !f.sHm) { toast('시작한 시각을 골라 주세요'); return; }
-  if (f.sPick && f.ePick === 'custom' && !f.eHm) { toast('끝난 시각을 골라 주세요'); return; }
-  const { startAt, endAt, min, bad } = pdoneTimes(f, p);
-  if (bad) { toast('12시간보다 길어요. 시각을 확인해 주세요'); return; }
-  if ((endAt || startAt || 0) > Date.now() + 60000) { toast('아직 오지 않은 시각이에요'); return; }
   state.pdone = null;
   stampFx(p);
-  await record('promise-result', { id: p.id, kind: p.kind, name: pName(p), date: p.date, startAt, endAt, min, size: f.size, note: withPaperTag(f.note.trim(), f.paper), manual: true });
+  await record('promise-result', { id: p.id, kind: p.kind, name: pName(p), date: p.date, startAt: null, endAt: null, min: null, size: f.size, note: withPaperTag(f.note.trim(), f.paper), manual: true });
   await record('promise-end', { id: p.id, at: Date.now() });   // 남은 알림을 지운다
   syncPromisePush();
 }
@@ -1556,8 +1531,8 @@ function openPromiseFix(id) {
 }
 function promiseFixForm() {
   const f = state.pfix;
-  return `<div class="p-done-form"><div class="p-edit"><input class="field pf-start" type="time" aria-label="시작" value="${esc(f.s)}"><span>~</span><input class="field pf-end" type="time" aria-label="끝" value="${esc(f.e)}"></div>
-    <p class="muted small">둘 다 비우면 시각 없이 남아요</p>
+  // 앱 v37: 시각 칸은 뺐다. 예전에 남긴 시각(f.s·f.e)은 그대로 다시 보내 타임라인이 바뀌지 않는다
+  return `<div class="p-done-form">
     <input class="field p-note" data-note="pfix" maxlength="100" aria-label="무엇을 했어요" placeholder="무엇을 했어요? (비워도 돼요)" value="${esc(f.note)}">
     <label class="p-small"><input type="checkbox" data-pfsmall ${f.size === 'small' ? 'checked' : ''}> 작게 했어요</label>
     <div class="row"><button class="btn" data-act="pfix-cancel">그만두기</button><button class="btn primary" data-act="pfix-save">저장</button></div></div>`;
@@ -1760,7 +1735,7 @@ $('#main').addEventListener('click', async e => {
   if (d.act === 'pskip-open') { state.pdone = null; state.pfix = null; state.pskip = { id: d.id, reason: '' }; drawPromises(); const el = [...document.querySelectorAll('.pskip-reason')].find(x => x.offsetParent); if (el) el.focus(); return; }   // 약속 카드는 처음 화면과 기록 화면에 함께 그려진다
   if (d.act === 'pskip-cancel') { state.pskip = null; drawPromises(); return; }
   if (d.act === 'pskip-save') { await savePromiseSkip(); return; }
-  if (d.act === 'pdone-open') { state.pskip = null; state.pfix = null; state.pdone = { id: d.id, min: 0, size: 'full', note: '', sPick: null, sHm: '', ePick: null, eHm: '' }; drawPromises(); return; }
+  if (d.act === 'pdone-open') { state.pskip = null; state.pfix = null; state.pdone = { id: d.id, size: 'full', note: '' }; drawPromises(); return; }
   if (d.pdpaper !== undefined && state.pdone) { state.pdone.paper = !state.pdone.paper; drawPromises(); return; }
   if (d.rpaper !== undefined) { const r = getPrun(); if (r) { savePrun({ ...r, rPaper: !r.rPaper }); drawPrun(); } return; }
   if (d.act === 'water-plus') { const n = +bodyNow(today()).water || 0; state.body = null; await record('body', { water: String(Math.min(99, n + 1)) }); return; }
@@ -1768,13 +1743,10 @@ $('#main').addEventListener('click', async e => {
     const g = goalsFor(today())[+d.tmove]; if (!g) return;
     await record('goal-move', { text: g.text, to: addDaysStr(today(), 1) }); toast('내일 할 일로 옮겼어요'); return;
   }
-  if (d.pdspick !== undefined && state.pdone) { state.pdone.sPick = d.pdspick === 'null' ? null : d.pdspick; drawPromises(); return; }
-  if (d.pdepick !== undefined && state.pdone) { state.pdone.ePick = d.pdepick === 'null' ? null : d.pdepick; drawPromises(); return; }
   if (d.act === 'pfix-open') { openPromiseFix(d.id); drawPromises(); return; }
   if (d.act === 'pfix-cancel') { state.pfix = null; drawPromises(); return; }
   if (d.act === 'pfix-save') { await savePromiseFix(); drawPromises(); return; }
   if (d.act === 'pdone-cancel') { state.pdone = null; drawPromises(); return; }
-  if (d.pdmin !== undefined) { state.pdone.min = state.pdone.min === +d.pdmin ? 0 : +d.pdmin; drawPromises(); return; }   // 다시 누르면 풀린다
   if (d.act === 'pdone-save') { await savePromiseDone(); return; }
   if (d.steppaper !== undefined) { const r = readStepInputs(); savePrun({ ...r, paper: r.paper === d.steppaper ? null : d.steppaper }); drawPrun(); return; }
   if (d.act === 'step-save') { await saveStep(); return; }
@@ -1910,10 +1882,6 @@ $('#main').addEventListener('change', e => {
   if (e.target.dataset.rsmall !== undefined) { savePrun({ ...getPrun(), rSize: e.target.checked ? 'small' : 'full' }); return; }
   if (e.target.dataset.pdsmall !== undefined && state.pdone) { state.pdone.size = e.target.checked ? 'small' : 'full'; return; }
   if (e.target.dataset.pfsmall !== undefined && state.pfix) { state.pfix.size = e.target.checked ? 'small' : 'full'; return; }
-  if (e.target.classList.contains('pd-start') && state.pdone) { state.pdone.sHm = e.target.value; drawPromises(); return; }
-  if (e.target.classList.contains('pd-end') && state.pdone) { state.pdone.eHm = e.target.value; drawPromises(); return; }
-  if (e.target.classList.contains('pf-start') && state.pfix) { state.pfix.s = e.target.value; return; }
-  if (e.target.classList.contains('pf-end') && state.pfix) { state.pfix.e = e.target.value; return; }
   if (e.target.id === 'pr-start') {
     const r = getPrun(), at = e.target.value ? pickCustomStart(r, e.target.value) : null;
     if (e.target.value && !at) toast('끝난 시각보다 앞이어야 해요');
@@ -2078,7 +2046,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
       if (q.get('pdone')) {
         const id = `${t0}-${q.get('pdone')}`;
         state.events = [{ id: 'demoP', ts: now, date: t0, type: 'promise-set', payload: { date: t0, promises: [{ id, kind: q.get('pdone'), date: t0, start: '20:00', end: '22:00', firstStep: '', small: '' }] }, sent: true }];
-        state.pdone = { id, min: 90, size: 'full', note: '데이터마이닝', sPick: null, sHm: '', ePick: null, eHm: '', paper: true };
+        state.pdone = { id, size: 'full', note: '데이터마이닝', paper: true };
       }
     }
     if (q.get('pwin')) { const dr = promiseDraft(today()); if (dr.rows[+q.get('pwin')]) dr.rows[+q.get('pwin')].open = true; }
