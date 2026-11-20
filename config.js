@@ -10,5 +10,11 @@ window.COACH_CONFIG = (() => {
     COACH_ROOT: local ? '/test' : '',
     DAY_CUTOFF_H: 3,   // daily-wiki와 같은 규칙: 새벽 3시 전은 어제
     WATER_GOAL: 7,     // 하루 물 목표(잔) — PC 요약 trend.waterGoal이 오면 그 값이 우선
+    // 💬 코치 대화 (PRD tasks/prd-coach-chat.md) — 키는 여기 두지 않는다(폰에서 직접 넣고 암호화 저장)
+    CHAT_API: 'https://api.anthropic.com/v1/messages',
+    CHAT_MODEL: 'claude-sonnet-5-5',   // 호호 결정 2026-11-20
+    CHAT_EFFORT: 'low',                // 짧은 대화라 low로 충분 — 생각 토큰(출력 요금)도 줄인다
+    CHAT_MAX_TURNS: 12,                // 대화 하나에 요청 12번까지
+    CHAT_MAX_DAILY: 60,                // 하루(새벽 3시 기준) 요청 60번까지
   };
 })();

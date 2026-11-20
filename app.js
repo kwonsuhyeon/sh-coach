@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v37';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v38';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -158,6 +158,100 @@ const cryptoBox = {
     return new TextDecoder().decode(pt);
   },
 };
+// ============ 💬 코치 대화 — Claude API 직접 호출 (앱 v38, PRD tasks/prd-coach-chat.md 단계 1) ============
+// 키: 이 앱 전용 키(콘솔 워크스페이스 sh-coach, 월 한도). 암호 문구 열쇠로 AES-GCM 잠가 IndexedDB 'chatKey'에만 둔다.
+//   events·snapshot·Dropbox·로그 어디에도 넣지 않는다. 화면엔 끝 4자만.
+// 호출: SDK 대신 fetch — 빌드 없는 순수 JS라 SDK를 쓰려면 키가 있는 페이지에 외부 CDN 코드를 불러와야 해서 피했다.
+// 제한: 대화 하나 C.CHAT_MAX_TURNS번 · 하루 C.CHAT_MAX_DAILY번. 실패해도 자동으로 다시 보내지 않는다(호호가 다시 누를 때만).
+const chat = {
+  turns: 0,
+  async keyInfo() { const s = await idb.get('chatKey'); return s ? { tail: s.tail } : null; },
+  async saveKey(raw) {
+    const key = await idb.get('key'); if (!key) throw new Error('nokey');
+    await idb.set('chatKey', { box: await cryptoBox.seal(key, raw), tail: raw.slice(-4) });
+  },
+  clearKey: () => idb.del('chatKey'),
+  async apiKey() {   // 열쇠가 바뀌어 못 풀면 null — 설정에서 다시 넣게 한다
+    const s = await idb.get('chatKey'), key = await idb.get('key');
+    if (!s || !key) return null;
+    try { return await cryptoBox.open(key, s.box); } catch { return null; }
+  },
+  daily() { const d = ls.get('chat.day'); return d && d.date === today() ? d.n : 0; },
+  newConversation() { chat.turns = 0; },
+  // 남은 횟수 확인 → 없으면 'turns' | 'daily'
+  limitHit() { return chat.daily() >= C.CHAT_MAX_DAILY ? 'daily' : chat.turns >= C.CHAT_MAX_TURNS ? 'turns' : null; },
+  // { system, messages, maxTokens, onText } → { text, stopReason }. 실패하면 Error(code) — code는 아래 errText의 키
+  async send({ system, messages, maxTokens = 4096, onText }) {
+    const hit = chat.limitHit(); if (hit) throw new Error(hit);
+    if (!navigator.onLine) throw new Error('offline');
+    const apiKey = await chat.apiKey(); if (!apiKey) throw new Error('nokey');
+    chat.turns++; ls.set('chat.day', { date: today(), n: chat.daily() + 1 });   // 보내기 전에 센다 — 실패한 요청도 횟수에 든다
+    let res;
+    try {
+      res = await fetch(C.CHAT_API, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2026-10-21',
+          'anthropic-dangerous-direct-browser-access': 'true',   // 브라우저에서 직접 부를 때 필요 (공식 SDK dangerouslyAllowBrowser와 같은 헤더)
+          'anthropic-beta': 'server-side-fallback-2026-07-01',    // 안전 분류기가 거절하면 서버가 다른 모델로 다시 돌린다
+        },
+        body: JSON.stringify({ model: C.CHAT_MODEL, max_tokens: maxTokens, stream: true, fallbacks: 'default',
+          output_config: { effort: C.CHAT_EFFORT }, ...(system ? { system } : {}), messages }),
+      });
+    } catch { throw new Error('network'); }
+    if (!res.ok) {
+      let msg = ''; try { const j = await res.json(); msg = (j.error && (j.error.type + ' ' + j.error.message)) || ''; } catch {}
+      if (res.status === 401) throw new Error('auth');
+      if (res.status === 403) throw new Error('perm');
+      if (res.status === 429) throw new Error('rate');
+      if (/credit|spend|billing|balance|limit/i.test(msg)) throw new Error('spend');
+      if (res.status >= 500) throw new Error('busy');
+      throw new Error('http' + res.status);
+    }
+    // SSE: event/data 줄을 빈 줄 단위로 나눠 읽는다. 글자는 text_delta만 (생각 블록은 보여 주지 않는다)
+    const reader = res.body.getReader(), dec = new TextDecoder();
+    let buf = '', text = '', stopReason = null;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        const data = block.split('\n').filter(l => l.startsWith('data:')).map(l => l.slice(5).trim()).join('');
+        if (!data) continue;
+        let ev; try { ev = JSON.parse(data); } catch { continue; }
+        if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') { text += ev.delta.text; if (onText) onText(text); }
+        else if (ev.type === 'message_delta' && ev.delta && ev.delta.stop_reason) stopReason = ev.delta.stop_reason;
+        else if (ev.type === 'error') throw new Error((ev.error && ev.error.type) === 'overloaded_error' ? 'busy' : 'stream');
+      }
+    }
+    if (stopReason === 'refusal') throw new Error('refusal');
+    return { text, stopReason };
+  },
+  // 오류 코드 → 한 줄. 키·응답 원문은 넣지 않는다
+  errText(code) {
+    return {
+      offline: '인터넷이 연결되면 다시 눌러 주세요',
+      network: '코치에게 닿지 못했어요. 인터넷을 확인하고 다시 눌러 주세요',
+      nokey: '설정 > 💬 코치 대화에서 키를 넣어 주세요',
+      auth: '키가 맞지 않아요. 설정에서 키를 다시 넣어 주세요',
+      perm: '이 키로는 쓸 수 없어요. 콘솔에서 키를 확인해 주세요',
+      rate: '잠깐 요청이 많았어요. 1분쯤 뒤에 다시 눌러 주세요',
+      spend: '이번 달 한도에 닿았어요. 콘솔에서 한도를 올리면 다시 쓸 수 있어요',
+      busy: '지금 Claude가 붐벼요. 조금 뒤에 다시 눌러 주세요',
+      refusal: '이 이야기는 코치가 답하지 못했어요. 말을 바꿔 다시 해 볼까요?',
+      stream: '답을 받다가 끊겼어요. 다시 눌러 주세요',
+      daily: '오늘 대화는 여기까지예요',
+      turns: '이 대화는 여기까지예요. 새로 시작할 수 있어요',
+    }[code] || `코치에게 닿지 못했어요 (${String(code).replace(/^http/, '오류 ')})`;
+  },
+  // 한도에 닿았을 때 기쁨 목록에서 하나 (US-703)
+  joyLine() { const j = (state.snap && state.snap.joys) || []; return j.length ? `대신 이건 어때요: ${pick(j).text}` : ''; },
+};
+
 function b64(buf) { let s = ''; for (const c of new Uint8Array(buf)) s += String.fromCharCode(c); return btoa(s); }
 function unb64(s) { return Uint8Array.from(atob(s), c => c.charCodeAt(0)); }
 
@@ -1961,6 +2055,7 @@ $('#btn-settings').onclick = async () => {
     (C.COACH_ROOT ? ` · 테스트 폴더 ${C.COACH_ROOT}` : '') + ` · 앱 ${APP_VERSION}` + (state.snapErr ? ` · 요약: ${state.snapErr}` : '');
   $('#opt-sound').checked = alarmOpt().sound; $('#opt-vibe').checked = alarmOpt().vibe;
   $('#ntfy-topic').value = push.topic();
+  await drawChatKey();
   $('#settings').showModal();
 };
 $('#ntfy-topic').onchange = e => { ls.set('ntfy.topic', e.target.value.trim()); drawPromises(); toast(e.target.value.trim() ? '주제 이름을 저장했어요' : '폰 푸시를 껐어요'); };
@@ -1976,6 +2071,39 @@ $('#btn-ntfy-test').onclick = async () => {
   try { await push.send({ title: '🔔 코치 앱 시험 알림', message: '이 알림이 보이면 폰 푸시 연결 완료예요. 누르면 코치 앱이 열려요.', priority: 4, tags: ['green_heart'] }); toast('보냈어요. 10초 안에 와야 해요'); }
   catch (e) { toast(navigator.onLine ? '보내지 못했어요: ' + e.message : '인터넷이 연결되면 다시 눌러 주세요'); }
 };
+// 💬 코치 대화 키 (US-701) — 저장 뒤엔 끝 4자만 보인다
+async function drawChatKey() {
+  const info = await chat.keyInfo(), ok = info && (await chat.apiKey());
+  $('#chat-key-info').textContent = !info ? '키 없음 — 넣으면 코치와 대화할 수 있어요'
+    : ok ? `🔐 키 저장됨 (…${info.tail}) · 오늘 보낸 요청 ${chat.daily()}/${C.CHAT_MAX_DAILY}`
+    : '암호 문구가 바뀌어 키를 열 수 없어요. 키를 다시 넣어 주세요';
+  $('#chat-key').value = ''; $('#chat-msg').textContent = '';
+}
+$('#btn-chat-save').onclick = async () => {
+  const raw = $('#chat-key').value.trim();
+  if (!raw) { $('#chat-msg').textContent = '키를 붙여 넣어 주세요'; return; }
+  if (!/^sk-ant-/.test(raw)) { $('#chat-msg').textContent = 'sk-ant- 로 시작하는 키가 아니에요'; return; }
+  if (!(await idb.get('key'))) { $('#chat-msg').textContent = '먼저 암호 문구를 정해 주세요 (키를 그 문구로 잠가요)'; return; }
+  await chat.saveKey(raw);
+  await drawChatKey(); toast('키를 잠가서 저장했어요');
+};
+$('#btn-chat-clear').onclick = async () => {
+  if (!(await chat.keyInfo())) { toast('지울 키가 없어요'); return; }
+  if (!confirm('이 폰에 저장한 코치 대화 키를 지울까요?')) return;
+  await chat.clearKey(); await drawChatKey(); toast('키를 지웠어요');
+};
+$('#btn-chat-test').onclick = async () => {
+  const m = $('#chat-msg'), b = $('#btn-chat-test');
+  b.disabled = true; m.textContent = '부르는 중…';
+  try {
+    chat.newConversation();
+    const r = await chat.send({ maxTokens: 1024, messages: [{ role: 'user', content: '연결 시험이에요. 한국어로 짧게 인사 한 문장만 해 주세요.' }], onText: t => { m.textContent = '💬 ' + t; } });
+    m.textContent = '✅ 연결됐어요 · 💬 ' + (r.text.trim() || '(빈 답)');
+  } catch (e) {
+    m.textContent = '❌ ' + chat.errText(e.message) + (e.message === 'daily' ? ' ' + chat.joyLine() : '');
+  } finally { b.disabled = false; drawChatKeyInfoOnly(); }
+};
+async function drawChatKeyInfoOnly() { const msg = $('#chat-msg').textContent; await drawChatKey(); $('#chat-msg').textContent = msg; }
 $('#opt-sound').onchange = e => ls.set('alarm.sound', e.target.checked);
 $('#opt-vibe').onchange = e => ls.set('alarm.vibe', e.target.checked);
 $('#btn-alarm-test').onclick = () => { unlockAudio(); alarm(); };
@@ -1986,7 +2114,15 @@ $('#btn-key').onclick = async () => {
   if (p.length < 8) { $('#key-msg').textContent = '8자 이상으로 정해 주세요'; return; }
   if (p !== p2v) { $('#key-msg').textContent = '두 칸이 서로 달라요'; return; }
   $('#key-msg').textContent = '열쇠 만드는 중…';
-  await idb.set('key', await cryptoBox.derive(p));
+  const newKey = await cryptoBox.derive(p);
+  // 새 열쇠로 옛 코치 키가 열리는지 본다 — 안 열리면(문구가 바뀌었으면) 지우고 다시 넣게 한다 (US-701)
+  const oldChat = await idb.get('chatKey');
+  if (oldChat) {
+    let same = false;
+    try { await cryptoBox.open(newKey, oldChat.box); same = true; } catch {}
+    if (!same) { await chat.clearKey(); toast('암호 문구가 바뀌어 코치 대화 키를 지웠어요. 설정에서 다시 넣어 주세요'); }
+  }
+  await idb.set('key', newKey);
   $('#pass').value = $('#pass2').value = ''; $('#key-msg').textContent = '';
   state.hasKey = true; state.rekey = false;
   toast('암호 문구를 정했어요');
@@ -2055,7 +2191,9 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
       state.run = q.get('phase') === 'run' ? { tid: q.get('run'), phase: 'run', endAt: now + runMs(), startedAt: now, praise: PRAISE.quick[0], delays, delaysTotal: delays }
         : { tid: q.get('run'), phase: 'count', countAt: now + LAUNCH.count * 1000, delays, delaysTotal: delays };
     }
-    if (!routeHash()) draw(); return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
+    if (!routeHash()) draw();
+    if (q.get('settings')) { $('#settings').showModal(); drawChatKey(); }   // 앱 v38 확인용: &settings=1 → 설정 창(💬 코치 대화 칸)
+    return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
   }
   const justLoggedIn = await dbx.finishLogin();
   state.connected = !!(await idb.get('auth'));
