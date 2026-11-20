@@ -339,3 +339,20 @@ dialog h3 { margin: 14px 0 8px; }
 .bt-wd.today { color: var(--ink); font-weight: 700; }
 .bt-n { text-align: right; font-size: 14px; }
 .paper-week { margin-bottom: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+
+/* 💬 코치 대화 (앱 v39) */
+.menu-btn.m-coach .emo { background: var(--blue-soft); }
+.coach-log-empty { margin: 0 0 10px; }
+.bubble { padding: 10px 12px; border-radius: 14px; margin: 8px 0; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-width: 88%; }
+.bubble.me { background: var(--blue-soft); margin-left: auto; border-bottom-right-radius: 4px; }
+.bubble.ai { background: #fff; border: 1px solid var(--line); border-bottom-left-radius: 4px; }
+.bubble.note { background: transparent; color: var(--muted); font-size: 13px; text-align: center; max-width: 100%; padding: 4px 0; }
+.coach-acts { display: grid; gap: 8px; margin: 6px 0 12px; }
+.coach-acts .btn { text-align: left; }
+.coach-done { color: var(--muted); font-size: 13px; margin: 4px 0 12px; }
+.coach-feels { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.coach-in { margin-top: 6px; }
+.coach-foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; }
+.coach-ctx { margin-top: 10px; }
+.coach-ctx pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: #f6f6f3; border-radius: 10px; padding: 10px; max-height: 320px; overflow: auto; }
+.goals li.focus { background: var(--blue-soft); border-radius: 8px; padding-left: 6px; }

@@ -55,9 +55,26 @@
       <a class="menu-btn m-rest" href="#rest"><span class="emo">🌿</span><b>쉬기</b><small>지금 상태에 맞는 쉼</small></a>
       <a class="menu-btn m-paper" href="#paper"><span class="emo">📚</span><b>논문</b><small id="menu-paper-sub">오늘 읽을 논문</small></a>
       <a class="menu-btn m-log" href="#log"><span class="emo">🧺</span><b>정리하기</b><small>기록 · 작은 즐거움 · 목표</small></a>
+      <a class="menu-btn m-coach" href="#coach"><span class="emo">💬</span><b>코치</b><small>막막하거나 하기 싫을 때 한 마디</small></a>
     </nav>
     <p class="joy-line" id="joy-line"></p>
     <p class="joy-line plan-line" id="plan-line"></p>
+  </div>
+
+  <!-- ===== 💬 코치 대화 (앱 v39, PRD tasks/prd-coach-chat.md 단계 2) ===== -->
+  <div class="view" id="v-coach" hidden>
+    <section class="card" id="coach-nokey" hidden>
+      <p>설정에서 키를 넣으면 쓸 수 있어요.</p>
+      <button class="btn" data-act="open-settings">설정 열기</button>
+    </section>
+    <section class="card coach" id="coach-card">
+      <div id="coach-log"></div>
+      <div id="coach-start"></div>
+      <div class="inline coach-in"><input class="field" id="coach-in" placeholder="직접 써도 돼요" maxlength="300" enterkeyhint="send" autocomplete="off"><button class="btn primary" id="btn-coach-send">보내기</button></div>
+      <label class="p-small"><input type="checkbox" id="coach-memo" checked> 행동을 고르면 메모에 한 줄 남기기</label>
+      <div class="coach-foot"><span class="muted small" id="coach-count"></span><button class="link small" data-act="coach-new">새 대화</button></div>
+      <details class="coach-ctx"><summary class="small">무엇을 보내나요?</summary><pre id="coach-ctx-text"></pre></details>
+    </section>
   </div>
 
   <!-- ===== 🌿 쉬기 ===== -->
