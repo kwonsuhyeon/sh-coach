@@ -5,7 +5,7 @@
 'use strict';
 
 const C = window.COACH_CONFIG;
-const APP_VERSION = 'v39';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
+const APP_VERSION = 'v40';   // sw.js의 VERSION과 함께 올린다 — 설정 창에 보여서 폰이 새 버전인지 확인할 수 있다
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const p2 = n => String(n).padStart(2, '0');
@@ -654,6 +654,28 @@ function moveAlarms(date) {   // date = 학교 가는 날
 // PC 없이 "기록이 없는 날"을 아는 방법 — 2시에 확인하는 게 아니라 걸어 둔 알림을 기록이 취소한다. 누르면 #calm → 쉬기(한 줄 일기 + 기쁨 목록)
 const CALM_HM = '14:00', CALM_DAYS = 3;
 const CALM_TYPES = ['did', 'memo', 'quick', 'joy', 'body', 'rest-choose', 'rest-done', 'promise-start', 'promise-result', 'research-step'];
+// 💬 낮 알림 (앱 v40, PRD tasks/prd-coach-nudge.md US-806): C.NUDGE_DAYS 요일의 C.NUDGE_HM에 "공부 기록이 없는 날"만 울린다.
+// 조용한 날 알림과 같은 방식(미리 걸고, 공부 기록·코치 메모가 생기면 지운다). 이 요일에는 조용한 날 알림을 걸지 않는다(같은 시각에 두 번 울리지 않게).
+// 알림 글은 공용 서버를 평문으로 지나므로 목표·과업 내용은 넣지 않는다.
+const STUDY_RE = /연구|논문|공부|스터디|독서|코딩|복습/;
+const NUDGE_DONE_RE = /^💬 코치: (.* · (했어요|조금)( — .*)?$|이미 하고 있어요|오늘은 쉬는 날)/;   // 그날 코치와 이미 닫은 이야기 — 다시 묻지 않는다
+const NUDGE_FREE_WD = [5, 6, 0];   // 금·토·일 = 학교에 가지 않는 날
+const isNudgeDay = date => (C.NUDGE_DAYS || []).includes(wdOf(date));
+function nudgeAlarms(date) {
+  const t = new Date(`${date}T${C.NUDGE_HM}:00`).getTime();
+  if (t <= Date.now() + PUSH_LEAD_MS || t >= Date.now() + PUSH_MAX_MS) return [];
+  const title = NUDGE_FREE_WD.includes(wdOf(date)) ? '💬 호호, 지금 어디쯤이에요?' : '💬 나를 위한 시간, 공부를 보냈나요?';
+  return [{ t, priority: 3, title, message: '눌러서 한 마디만 골라 주세요', tags: ['speech_balloon'] }];
+}
+function hasStudy(events, date) {   // 공부 기록(약속·박사 한 걸음·한 일) 또는 그날 코치와 이미 이야기한 메모
+  const d = state.snap && state.snap.days && state.snap.days[date];
+  const undone = id => events.some(u => u.type === 'promise-undo' && u.payload.id === id);
+  return events.some(e => (e.type === 'promise-result' && e.payload.date === date && isStudyKind(e.payload.kind) && !undone(e.payload.id))
+      || (e.date === date && (e.type === 'research-step' || (e.type === 'did' && STUDY_RE.test(e.payload.act || ''))
+        || (e.type === 'memo' && NUDGE_DONE_RE.test(e.payload.text || '')))))
+    || ((state.snap && state.snap.promises) || []).some(r => (r.date || String(r.id).slice(0, 10)) === date && /-(study|research\d*)$/.test(String(r.id)))
+    || !!(d && ((d.did || []).some(x => STUDY_RE.test(x.act || '')) || (/📄 박사 한 걸음:/.test(String(d.memo || '')) || String(d.memo || '').split(/\r?\n/).some(l => NUDGE_DONE_RE.test(l.replace(/^\(\d{2}:\d{2}[^)]*\)\s*/, ''))))));
+}
 function calmAlarms(date) {
   const t = new Date(`${date}T${CALM_HM}:00`).getTime();
   if (t <= Date.now() + PUSH_LEAD_MS || t >= Date.now() + PUSH_MAX_MS) return [];
@@ -683,7 +705,8 @@ function syncPromisePush() {
       if (dayType(date) && !mv && date > t) want[`move-${date}`] = { date, sig: 'move', alarms: () => moveAlarms(date), click: `#move/${date}` };
     }
     for (const date of Array.from({ length: CALM_DAYS }, (_, n) => addDaysStr(t, n))) {
-      if (!hasRecord(events, date)) want[`calm-${date}`] = { date, sig: 'calm', alarms: () => calmAlarms(date), click: '#calm' };
+      if (isNudgeDay(date)) { if (!hasStudy(events, date)) want[`nudge-${date}`] = { date, sig: `nudge ${C.NUDGE_HM}`, alarms: () => nudgeAlarms(date), click: '#nudge' }; }
+      else if (!hasRecord(events, date)) want[`calm-${date}`] = { date, sig: 'calm', alarms: () => calmAlarms(date), click: '#calm' };
     }
     const saved = ls.get('promisePush') || {};
     for (const id of Object.keys(saved)) {
@@ -956,9 +979,10 @@ function drawToday() {
   box.hidden = dayLocked(date); if (box.hidden) return;
   const goals = goalsFor(date).map((g, i) => ({ ...g, i })), groups = [];
   for (const g of goals) { if (!g.depth || !groups.length) groups.push({ top: g, kids: [] }); else groups[groups.length - 1].kids.push(g); }
-  const left = groups.filter(x => !x.top.done).length;
+  const left = groups.filter(x => !x.top.done).length, focus = focusGoal();
+  groups.sort((a, b) => (b.top.text === focus) - (a.top.text === focus));   // 코치와 고른 "이것 하나만"은 맨 위로 (앱 v40)
   $('#today-count').textContent = groups.length ? (left ? `${left}개 남음` : '다 했어요 👏') : '';
-  const li = (g, move) => `<li class="${g.done ? 'done' : ''} ${g.depth ? 'sub' : ''} ${state.focusGoal === g.text && !g.done ? 'focus' : ''}"><input type="checkbox" data-ti="${g.i}" ${g.done ? 'checked' : ''} aria-label="${esc(g.text)}"><span>${esc(g.text)}</span>${
+  const li = (g, move) => `<li class="${g.done ? 'done' : ''} ${g.depth ? 'sub' : ''} ${focus === g.text && !g.done ? 'focus' : ''}"><input type="checkbox" data-ti="${g.i}" ${g.done ? 'checked' : ''} aria-label="${esc(g.text)}"><span>${esc(g.text)}</span>${
     move ? `<button class="link small t-move" data-tmove="${g.i}">내일로</button>` : ''}</li>`;
   // 끝낸 일은 아래로 — 남은 일이 먼저 보이게
   $('#today-list').innerHTML = [...groups.filter(x => !x.top.done), ...groups.filter(x => x.top.done)]
@@ -1325,6 +1349,8 @@ function routeHash() {
   }
   if (h.startsWith('move/')) { location.hash = ''; return true; }
   if (h === 'calm') { state.rest = { ...state.rest, diary: true }; location.hash = '#rest'; return true; }   // 🌿 조용한 날 알림 → 한 줄 일기가 펼쳐진 쉬기
+  if (h === 'nudge') { state.coachNudge = true; state.nudgeDoing = false; ls.set('chat.cur', null); location.hash = '#coach'; return true; }   // 💬 낮 알림 → 코치의 고정 첫 화면 (앞 대화는 지난 대화에 남는다)
+  if (h === 'check') { location.hash = '#coach'; return true; }   // 💬 확인 알림 → 하던 대화 (과업 확인 칩이 떠 있다)
   return false;
 }
 async function startPrun() {
@@ -1768,53 +1794,123 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
   if (logOffset() && Date.now() - hiddenAt > 10 * 60000) { state.logOffset = 0; state.body = null; draw(); }
 });
-window.addEventListener('hashchange', () => { state.logOffset = 0; state.body = null; if (routeHash()) return; window.scrollTo(0, 0); draw(); });
+window.addEventListener('hashchange', () => {
+  state.logOffset = 0; state.body = null; if (routeHash()) return;
+  if (view() !== 'coach') { state.coachNudge = false; state.nudgeDoing = false; state.coachPast = null; }   // 코치 화면을 떠나면 낮 알림 첫 화면·지난 대화 보기를 닫는다
+  window.scrollTo(0, 0); draw();
+});
 
-// ============ 💬 코치 대화 화면 (앱 v39, PRD tasks/prd-coach-chat.md 단계 2 · US-704~708) ============
-// 감정 한 마디로 시작 → 짧은 대화 → 행동 하나(버튼). 버튼은 기존 이벤트만 쓴다(rest-choose·goal-move·promise-skip·memo).
+// ============ 💬 코치 대화 화면 (앱 v39 PRD tasks/prd-coach-chat.md · 앱 v40 PRD tasks/prd-coach-nudge.md) ============
+// 감정 한 마디(또는 낮 알림)로 시작 → 짧은 대화 → 행동 하나(버튼). 버튼은 기존 이벤트를 쓴다(rest-choose·goal-move·promise-skip·memo·quick).
+// 새 이벤트는 week-goal-add 하나(이번 주 목표 덧붙이기 — PC가 wiki/weeks에 쓴다).
 // 약속 제안은 시작을 기록하지 않는다(앱 v37: 시간은 CSV에서만) — 처음 화면 약속 카드로 보내고 첫 동작을 알려 준다.
-// 대화는 이 폰 localStorage 'chat.conv'에만, 그날(새벽 3시 기준)이 지나면 버린다. 오늘 상황은 대화를 시작할 때 한 번 만들어 고정한다.
+// 대화는 이 폰 localStorage 'chat.convs'에만 C.CHAT_KEEP_DAYS일 치(지금 대화 = 'chat.cur'). 오늘 상황은 대화를 시작할 때 한 번 만들어 고정한다.
+// v40: 지친 것과 미루는 것을 칩으로 가르고([[갈림]]), 미루는 쪽이면 15분 과업([[과업]])을 먼저 권한다. 과업을 고르면 조금 뒤 "뭐 봤어요?"를 묻는다.
 const FEELS = ['막막해요', '하기 싫어요', '귀찮아요', '지쳤어요', '불안해요'];
-const COACH_RULES = `당신은 호호의 폰 기록 앱 안에 있는 짧은 대화 코치다. 호호는 하기 싫거나 막막할 때 감정 한 마디로 대화를 연다.
+const BRANCH = ['몸이 지쳤어요', '뭘 할지 흐릿해요', '잘해야 해서 부담돼요'];
+const BRANCH_FEELS = ['막막해요', '하기 싫어요', '귀찮아요'];
+const CHECKS = ['했어요', '조금 했어요', '못 했어요'];
+const COACH_RULES = `당신은 호호의 폰 기록 앱 안에 있는 짧은 대화 코치다. 호호는 하기 싫거나 막막할 때 감정 한 마디로 대화를 열거나, 낮 알림을 눌러 들어온다.
 목표는 긴 이야기가 아니라 지금 할 행동 하나로 대화를 끝내는 것이다.
+호호는 잘하고 싶은 마음 때문에 시작이 늦고, 마감이 가까워야 움직인다. 그래서 몸이 지친 게 아니라면 "그래도 이것만"을 한 번은 권한다.
 
 말하는 방식
 - 한 번에 질문은 하나만, 답은 세 문장 안. 부드러운 존댓말("~해요")로, 호칭은 "호호".
 - 훈계, 과한 칭찬, 한 번에 여러 제안을 하지 않는다.
-- 쉬는 것도 답이다. "오늘은 안 하기"를 골라도 실패로 말하지 않는다.
+- 쉬는 것도 답이다. 호호가 쉬기로 하면 실패로 말하지 않는다.
 - 연구 시간을 늘리려고 수면·운동·쉼을 깎자고 하지 않는다.
-- [오늘 상황]과 [호호의 성향]에 있는 것만 근거로 말한다. 없는 일정·기록·숫자를 지어내지 않는다.
+- [오늘 상황], [호호의 성향], 호호가 이 대화에서 한 말만 근거로 말한다. 없는 일정·기록·숫자를 지어내지 않는다.
 - 몸무게·식사 이야기는 꺼내지 않는다.
 
-감정에 따라
-- 하기 싫어요·귀찮아요: 이유를 캐묻지 않는다. 한 번만 묻고, 약속의 "작게"나 기쁨 목록에서 하나를 제안한다.
-- 지쳤어요: 일을 권하지 않는다. 기쁨 목록이나 활동 사전에서 에너지가 "낮음"인 쉼 하나를 제안한다.
-- 불안해요: 사실과 해석을 나눠 주고(성향의 감정 신호 해석 참고), 지금 할 수 있는 작은 행동 하나로 끝낸다.
-- 막막해요: 오늘 할 일 중 "지금 하나만 고른다면"을 같이 정하고 첫 동작까지 쪼갠다. 나머지는 내일로를 권한다.
+먼저 가르기
+- 막막해요·하기 싫어요·귀찮아요로 시작하면 첫 답에서 짧게 받아 주고 "어느 쪽에 가까워요?" 하나만 묻는다. 답 끝에 [[갈림]]을 붙인다(앱이 칩 세 개를 띄운다: 몸이 지쳤어요 · 뭘 할지 흐릿해요 · 잘해야 해서 부담돼요).
+- 이 질문은 대화에서 한 번만 한다. 그 밖의 이유는 캐묻지 않는다.
+- 호호의 첫 말이 이미 그 셋 중 하나면 묻지 않고 바로 아래로 간다.
+
+갈림에 따라
+- 몸이 지쳤어요·지쳤어요: 일을 권하지 않는다. 기쁨 목록이나 활동 사전에서 에너지가 "낮음"인 쉼 하나를 제안한다.
+- 뭘 할지 흐릿해요: 과업 하나를 정해 준다.
+- 잘해야 해서 부담돼요: 끝 기준을 일부러 낮춘 과업 하나를 권한다. 대충 봐도 합격이라는 뜻을 글로 말한다.
+- 불안해요: 사실과 해석을 나눠 주고(성향의 감정 신호 해석 참고), 지금 할 수 있는 작은 과업 하나로 끝낸다.
 - 직접 쓴 말: 위에서 가장 가까운 방식을 따른다.
+
+과업
+- 과업은 [이번 주 목표]에서 하나를 골라 지금 15분 안에 할 수 있는 크기로 쪼갠 것이다. [x]로 끝난 목표는 고르지 않는다.
+- 글에서 세 가지를 말한다: 무엇을 할지, 첫 동작(몸을 움직이는 동작 하나), 끝 기준("여기까지 하면 합격"). 끝 기준은 낮게 잡는다.
+- 몸이 지친 게 아닌 경우, 그 과업에 대한 [[내일로]]·[[안하기]]·[[그만]]은 호호가 과업을 한 번 거절한 뒤에만 붙인다.
+- 호호가 과업을 거절하면 5분짜리 더 작은 과업을 한 번만 더 권한다. 또 거절하면 더 권하지 않고 물러난다([[내일로]]나 [[그만]]). 세 번째 권유는 없다.
+- 할 일이 많아 막막해하면 과업 하나를 정하고, 나머지 할 일은 [[내일로]]를 권해도 된다.
+- 과업 버튼을 누르면 앱이 조금 뒤에 "뭐 봤어요?"를 묻는다. 호호의 말이 "[확인] 못 했어요"로 시작하면 탓하지 않고 5분 과업을 한 번만 권한다. 이미 5분 과업이었다면 권하지 않고 물러난다.
+
+이번 주 목표가 없을 때 ([이번 주 목표]가 (없음))
+- "이번 주 주간 목표는요?"라고 한 번 묻는다.
+- 호호가 답하면 목표를 한 줄씩(최대 3개, 한 줄 40자 안) 정리해 보여 주고, 답 끝에 줄마다 [[주간목표:글]]을 붙인다. 같은 답에서 그중 하나로 과업도 제안한다([[과업::15:글]]).
+- 호호가 모르겠다고 하면 [오늘 할 일]에서 과업을 만든다. 오늘 할 일도 없으면 지금 가장 마음에 걸리는 일 하나만 묻는다.
+
+시각에 따라 ([지금]의 시각)
+- 18시 이후: "이미 늦었다"는 전제를 받지 않는다. "지금부터 15분"으로 과업을 권한다.
+- 23시 이후: 과업을 권하지 않는다. 내일 첫 과업 한 줄만 같이 정하고 끝낸다(표시 없이 글로).
 
 행동 버튼
 제안할 때는 답의 맨 끝에 아래 표시를 붙인다. 앱이 표시를 버튼으로 바꾸고 글에서는 지운다.
-보통은 하나만 붙이고, [[할일]]과 [[내일로]]만 함께 붙여도 된다. [오늘 상황]에 있는 기호만 쓴다. 맞는 기호가 없으면 표시 없이 글로만 제안한다.
+보통은 하나만 붙인다. [[과업]]과 [[내일로]], [[과업]]과 [[주간목표]]는 함께 붙여도 된다. 기호는 [오늘 상황]에 있는 것만 쓴다. 맞는 기호가 없으면 표시 없이 글로만 제안한다.
+- [[과업:w1:15:논문 1편 초록과 그림 1 보기]] 이번 주 목표 w1에서 만든 15분 과업. 오늘 할 일에서 만들면 g0처럼, 근거 기호가 없으면 비워서 [[과업::15:글]]. 가운데 숫자는 분(15 또는 5), 글은 40자 안이고 대괄호를 쓰지 않는다.
 - [[쉼:j3]] 기쁨 목록 j3로 쉬기 시작
 - [[쉼:a:walk]] 활동 사전 a:walk로 쉬기 시작 (작게 하려면 [[쉼:a:walk:작게]])
 - [[약속:p1]] 오늘 약속 p1을 하러 가기 (첫 동작을 글에서 함께 말한다)
-- [[할일:g0]] 오늘 할 일 g0 하나만 하기 (첫 동작을 글에서 함께 말한다)
 - [[내일로:g2]] 오늘 할 일 g2를 내일로 옮기기
 - [[안하기:p1]] 오늘 약속 p1은 오늘 하지 않기
 - [[그만]] 오늘은 아무것도 하지 않고 쉬기
-첫 답에서는 짧게 받아 주고 질문 하나만 해도 된다. 호호가 고르기 어려워하면 늦어도 두 번째 답에는 제안을 붙인다.`;
+- [[주간목표:글]] 이번 주 목표로 저장할 한 줄
+- [[갈림]] 가르는 질문을 할 때`;
 const ENERGY_KO = { low: '낮음', mid: '보통', refresh: '기분 전환' };
 const STATUS_KO = { done: '지킴', skip: '안 했어요', doing: '하는 중', past: '시간 지남', open: '지금 시간', before: '아직' };
 const coachSystem = () => COACH_RULES + '\n\n[호호의 성향]\n' + ((state.snap && state.snap.profile) || '(없음)');
 const todayPromises = () => { const t = today(), set = promiseSet(t); return [...(set ? set.promises : []), ...researchPromises(t)].sort((a, b) => a.start.localeCompare(b.start)); };
 const pFirst = p => p.firstStep || (((kindOf(p.kind) || {}).first) || {}).text || '';
 const pSmall = p => p.small || (((kindOf(p.kind) || {}).small) || {}).text || '';
-// 오늘 상황 (US-705) — 보내는 것: 오늘 할 일·약속·기쁨 목록·활동 첫 동작 사전·지금 시각·날 종류. 메모·몸무게·먹은 것·잠긴 날 내용은 넣지 않는다
+// 이번 주(ISO 주, PC server.js isoWeek와 같은 계산) — 주간 계획 파일 이름 'YYYY-Www'
+function isoWeek(date) {
+  const [y, m, d] = date.split('-').map(Number), dt = new Date(y, m - 1, d), day = (dt.getDay() + 6) % 7;
+  const thu = new Date(y, m - 1, d - day + 3), jan1 = new Date(thu.getFullYear(), 0, 1);
+  return `${thu.getFullYear()}-W${p2(Math.ceil(((thu - jan1) / 86400000 + 1) / 7))}`;
+}
+// 이번 주 목표 (US-804) — 요약 weekGoals(PC wiki/weeks의 🎯 이번 주 목표) + PC가 아직 반영하지 않은 내 week-goal-add
+function weekGoalsNow() {
+  const wk = isoWeek(today()), s = state.snap || {};
+  const goals = (s.week === wk ? s.weekGoals || [] : []).map(g => ({ ...g }));
+  for (const e of pendingEvents(['week-goal-add'])) if (e.payload.week === wk && !goals.some(g => g.text === e.payload.text)) goals.push({ text: e.payload.text, done: false, depth: 0 });
+  return goals;
+}
+// ----- 대화 보관 (US-808): 이 폰에만, C.CHAT_KEEP_DAYS일 -----
+function convAll() {
+  const cut = addDaysStr(today(), -((C.CHAT_KEEP_DAYS || 7) - 1));
+  let all = ls.get('chat.convs');
+  if (!Array.isArray(all)) {   // 앱 v39의 대화 하나('chat.conv')를 옮긴다
+    const old = ls.get('chat.conv'); all = [];
+    if (old && old.date && Array.isArray(old.msgs)) { old.id = 'c' + (new Date(old.date + 'T12:00:00').getTime()); old.at = old.at || null; if (old.done) old.end = String(old.done).replace(/^\S+\s/, ''); all.push(old); if (old.date === today()) ls.set('chat.cur', old.id); }
+    ls.set('chat.convs', all); ls.set('chat.conv', null);
+  }
+  return all.filter(c => c && c.date >= cut);
+}
+const coachConv = () => { const id = ls.get('chat.cur'), c = id && convAll().find(x => x.id === id); return c && c.date === today() ? c : null; };   // 지금 대화는 오늘 것만
+function saveConv(c, cur = true) {
+  // 지난 대화는 보여 줄 글만 남긴다(오늘 상황·기호 사전은 크다)
+  const rest = convAll().filter(x => x.id !== c.id).map(x => (x.ctx || x.refs ? { ...x, ctx: undefined, refs: undefined } : x));
+  ls.set('chat.convs', [...rest, c].sort((a, b) => String(a.id).localeCompare(String(b.id))));
+  if (cur) ls.set('chat.cur', c.id);
+}
+const convLabel = c => `${c.feel || ''}${c.end ? ` → ${c.end}` : ''}`;
+// 오늘 상황 (US-705·US-804) — 보내는 것: 오늘 할 일·이번 주 목표·약속·기쁨 목록·활동 첫 동작 사전·지금 시각·날 종류·지난 대화의 결말 한 줄.
+// 메모·몸무게·먹은 것·잠긴 날 내용·지난 대화 전문은 넣지 않는다
 function coachContext() {
-  const t = today(), now = new Date(), refs = { g: {}, p: {}, j: {}, a: {} }, L = [];
+  const t = today(), refs = { g: {}, w: {}, p: {}, j: {}, a: {} }, L = [];
   const dt = dayType(t), mv = moveOf(t), car = (daytypes() || {}).car || { name: '회복 날', emoji: '🌙' };
   L.push(`[지금] ${t} ${WD[wdOf(t)]}요일 ${nowHM()} · ${!dt ? '학교 가지 않는 날' : mv === 'car' ? `${car.emoji} ${car.name}(차로 다녀오는 날, 연구 블록 없음)` : `${dt.emoji} ${dt.name}(셔틀)${dt.success ? ` · 성공 기준: ${dt.success}` : ''}`}`);
+  L.push('', '[이번 주 목표]');
+  const wg = weekGoalsNow();
+  wg.forEach((g, i) => { refs.w['w' + i] = g; L.push(`${'  '.repeat(g.depth || 0)}w${i} [${g.done ? 'x' : ' '}] ${g.text}`); });
+  if (!wg.length) L.push('(없음)');
   L.push('', '[오늘 할 일]');
   if (dayLocked(t)) L.push('(잠긴 날이라 보내지 않음)');
   else {
@@ -1840,111 +1936,269 @@ function coachContext() {
     L.push(`a:${a.id} ${a.name} (${a.type || ''}${a.energy && a.energy.length ? ' · 에너지 ' + a.energy.map(e => ENERGY_KO[e] || e).join('/') : ''}${a.min ? ` · ${a.min}분` : ''})${first ? ` 첫 동작: ${first}` : ''}${a.small ? ` · 작게: ${a.small.text}` : ''}`);
   }
   if (!activities().length) L.push('(없음)');
+  const past = convAll().filter(c => c.end).slice(-3);   // 지난 대화는 결말 한 줄씩만 (전문은 보내지 않는다)
+  if (past.length) L.push('', '[지난 대화의 결말]', ...past.map(c => `${c.date.slice(5)} ${convLabel(c)}`));
   return { text: L.join('\n'), refs };
 }
-const coachConv = () => { const c = ls.get('chat.conv'); return c && c.date === today() ? c : null; };   // 그날이 지나면 버린다 (US-708)
-const saveConv = c => ls.set('chat.conv', c);
-const ACT_RE = /\[\[(쉼|약속|할일|내일로|안하기|그만)(?::([^\]]*))?\]\]/g;
+const ACT_RE = /\[\[(쉼|약속|할일|과업|내일로|안하기|그만|주간목표|갈림)(?::([^\]]*))?\]\]/g;
 const stripActs = s => String(s || '').replace(ACT_RE, '').replace(/\[\[[^\]]*$/, '').trim();   // 받는 중 끊긴 [[…도 숨긴다
-// 답 끝의 표시 → 버튼. [오늘 상황]에 없는 기호면 버튼을 만들지 않는다 (US-707: 글로만 보인다)
+const cutTask = s => String(s || '').replace(/\s+/g, ' ').trim().slice(0, C.TASK_MAX_LEN || 40);
+// 답 끝의 표시 → 버튼. [오늘 상황]에 없는 기호면 버튼을 만들지 않는다 (US-707: 글로만 보인다). 과업은 글이 있으면 기호 없이도 된다
 function coachActions(text, refs) {
-  const out = [];
+  const out = [], R = { g: {}, w: {}, p: {}, j: {}, a: {}, ...(refs || {}) };
   for (const m of String(text || '').matchAll(ACT_RE)) {
     const [, kind, arg = ''] = m;
-    if (kind === '쉼' && refs.j[arg]) out.push({ kind, arg, label: `🌿 ${refs.j[arg].text}` });
+    if (kind === '쉼' && R.j[arg]) out.push({ kind, arg, label: `🌿 ${R.j[arg].text}` });
     else if (kind === '쉼' && arg.startsWith('a:')) {
-      const [, id, small] = arg.split(':'), a = refs.a[id];
+      const [, id, small] = arg.split(':'), a = R.a[id];
       if (a) out.push({ kind, arg, label: `🌿 ${a.name}${small ? ' · 작게' : ''}` });
-    } else if (kind === '약속' && refs.p[arg]) out.push({ kind, arg, label: `💚 ${pName(refs.p[arg])} 하러 가기` });
-    else if (kind === '할일' && refs.g[arg]) out.push({ kind, arg, label: `🎯 ${refs.g[arg].text} — 이것 하나만` });
-    else if (kind === '내일로' && refs.g[arg]) out.push({ kind, arg, label: `➡️ ${refs.g[arg].text} 내일로` });
-    else if (kind === '안하기' && refs.p[arg]) out.push({ kind, arg, label: `🌙 ${pName(refs.p[arg])} 오늘은 안 하기` });
+    } else if (kind === '약속' && R.p[arg]) out.push({ kind, arg, label: `💚 ${pName(R.p[arg])} 하러 가기` });
+    else if (kind === '과업') {
+      const parts = arg.split(':'), hasMin = /^\d{1,2}$/.test(parts[1] || ''), min = hasMin ? Math.max(1, +parts[1]) : 15;
+      const task = cutTask(parts.slice(hasMin ? 2 : 1).join(':')) || cutTask((R.g[parts[0]] || R.w[parts[0]] || {}).text);
+      if (task) out.push({ kind, arg, min, text: task, label: `🎯 이걸로 ${min}분 — ${task}` });
+    } else if (kind === '할일' && R.g[arg]) out.push({ kind: '과업', arg, min: 15, text: R.g[arg].text, label: `🎯 이걸로 15분 — ${R.g[arg].text}` });   // v39 표시
+    else if (kind === '내일로' && R.g[arg]) out.push({ kind, arg, label: `➡️ ${R.g[arg].text} 내일로` });
+    else if (kind === '안하기' && R.p[arg]) out.push({ kind, arg, label: `🌙 ${pName(R.p[arg])} 오늘은 안 하기` });
     else if (kind === '그만') out.push({ kind, arg, label: '🌙 오늘은 여기까지, 쉬기' });
   }
+  return out;
+}
+const coachWeekGoals = text => [...String(text || '').matchAll(ACT_RE)].filter(m => m[1] === '주간목표').map(m => cutTask(m[2])).filter(Boolean).slice(0, 3);
+const hasBranch = text => [...String(text || '').matchAll(ACT_RE)].some(m => m[1] === '갈림');
+const apiMsgs = c => c.msgs.filter(m => !m.local).map(m => ({ role: m.role, content: m.content }));   // 앱이 만든 말풍선(local)은 보내지 않는다
+const lastAi = c => [...c.msgs].reverse().find(m => m.role === 'assistant' && !m.local);
+const hmAt = ms => { const d = new Date(ms); return `${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+// 코치와 고른 "이것 하나만" — 오늘 할 일 맨 위에 강조 (새로 열어도 남게 폰에 둔다)
+const focusGoal = () => { const f = ls.get('focus'); return f && f.date === today() ? f.text : ''; };
+const setFocus = text => ls.set('focus', { date: today(), text });
+
+function convBubbles(c, { live = null, readonly = false } = {}) {
+  const out = [], msgs = c.msgs || [], ai = readonly ? null : lastAi(c);
+  msgs.forEach(m => {
+    out.push(`<div class="bubble ${m.role === 'user' ? 'me' : 'ai'}">${esc(m.role === 'user' ? m.show || m.content : stripActs(m.content))}</div>`);
+    if (m.role !== 'assistant' || m.local) return;
+    const wk = coachWeekGoals(m.content);
+    if (wk.length) out.push(`<ul class="coach-wk">${wk.map(t => `<li>${esc(t)}</li>`).join('')}</ul>` + (m.wk ? '<p class="coach-done">📌 이번 주 목표에 저장했어요</p>'
+      : m === ai && !live ? `<div class="coach-acts"><button class="btn soft" data-act="coach-wk">📌 이번 주 목표로 저장</button></div>` : ''));
+    if (m.done) out.push(`<p class="coach-done">✔ ${esc(m.done)}</p>`);
+    else if (m === ai && !live) {
+      const acts = coachActions(m.content, c.refs);
+      if (acts.length) out.push(`<div class="coach-acts">${acts.map((a, k) => `<button class="btn" data-act="coach-do" data-k="${k}">${esc(a.label)}</button>`).join('')}</div>`);
+      // 가르는 칩 (US-801) — 코치가 [[갈림]]을 붙였거나, 막막해요·하기 싫어요·귀찮아요의 첫 답인데 아직 제안이 없을 때. 대화에서 한 번만
+      else if (!msgs.some(x => x.role === 'user' && BRANCH.includes(x.show)) && (hasBranch(m.content) || (BRANCH_FEELS.includes(c.feel) && msgs.filter(x => x.role === 'assistant').length === 1)))
+        out.push(`<div class="coach-feels">${BRANCH.map(b => `<button class="chip-btn" data-say="${b}">${b}</button>`).join('')}</div>`);
+    }
+  });
+  if (live) out.push(`<div class="bubble ai" id="coach-live">${esc(stripActs(live.text) || '…')}</div>`);
   return out;
 }
 async function drawCoach() {
   const hasKey = !!(await chat.apiKey());
   $('#coach-nokey').hidden = hasKey; $('#coach-card').hidden = !hasKey;
   if (!hasKey) return;
-  const c = coachConv(), live = state.coachLive;
-  const bubbles = [];
-  if (c) c.msgs.forEach((m, i) => {
-    bubbles.push(`<div class="bubble ${m.role === 'user' ? 'me' : 'ai'}">${esc(m.role === 'user' ? m.show || m.content : stripActs(m.content))}</div>`);
-    const last = i === c.msgs.length - 1;
-    if (m.role === 'assistant' && last && !live) {
-      if (c.done) bubbles.push(`<p class="coach-done">✔ ${esc(c.done)}</p>`);
-      else { const acts = coachActions(m.content, c.refs); if (acts.length) bubbles.push(`<div class="coach-acts">${acts.map((a, k) => `<button class="btn" data-act="coach-do" data-k="${k}">${esc(a.label)}</button>`).join('')}</div>`); }
-    }
-  });
-  if (live) bubbles.push(`<div class="bubble ai" id="coach-live">${esc(stripActs(live.text) || '…')}</div>`);
+  const past = state.coachPast || null;
+  $('#coach-ui').hidden = !!past;
+  $('#coach-foot').innerHTML = past
+    ? `<span></span><button class="link small" data-act="${past === 'list' ? 'coach-back' : 'coach-past'}">${past === 'list' ? '‹ 대화로 돌아가기' : '‹ 지난 대화 목록'}</button>`
+    : `<span class="muted small" id="coach-count"></span><span class="coach-links"><button class="link small" data-act="coach-past">지난 대화</button><button class="link small" data-act="coach-new">새 대화</button></span>`;
+  if (past) {   // 지난 대화 (읽기 전용)
+    const all = convAll().filter(x => (x.msgs || []).length).sort((a, b) => String(b.id).localeCompare(String(a.id)));
+    const one = past !== 'list' && all.find(x => x.id === past);
+    $('#coach-log').innerHTML = one ? `<p class="muted small">${one.date.slice(5).replace('-', '.')}${one.at ? ' ' + hmAt(one.at) : ''} · ${esc(convLabel(one))}</p>` + convBubbles(one, { readonly: true }).join('')
+      : all.length ? `<p class="muted small">최근 ${C.CHAT_KEEP_DAYS}일 대화예요. 이 폰에만 있어요.</p><div class="coach-acts">${all.map(x =>
+        `<button class="btn" data-past="${esc(x.id)}"><span class="muted small">${x.date.slice(5).replace('-', '.')}${x.at ? ' ' + hmAt(x.at) : ''}</span><br>${esc(convLabel(x))}</button>`).join('')}</div>`
+        : '<p class="muted">아직 지난 대화가 없어요.</p>';
+    return;
+  }
+  const c = coachConv(), live = state.coachLive, nudge = !c && state.coachNudge;
+  const oldLine = $('#coach-line'), draft = oldLine ? oldLine.value : '';   // 다시 그려도 쓰던 한 줄은 남긴다
+  const bubbles = c ? convBubbles(c, { live }) : live ? [`<div class="bubble ai" id="coach-live">${esc(stripActs(live.text) || '…')}</div>`] : [];
+  // 과업 확인 (US-807) — 과업을 고른 뒤 답할 때까지 떠 있다(알림보다 먼저 끝내도 바로 답할 수 있게)
+  if (c && c.task && !c.task.end && !live) bubbles.push(`<div class="coach-check"><p class="small"><b>🎯 ${esc(c.task.text)}</b><br><span class="muted">${Date.now() < c.task.at ? `${hmAt(c.task.at)}쯤 물어볼게요. 먼저 끝났으면 지금 눌러도 돼요` : '뭐 봤어요? 한 줄만'}</span></p>
+    <input class="field" id="coach-line" placeholder="뭐 봤어요? (비워도 돼요)" maxlength="120" enterkeyhint="done" autocomplete="off">
+    <div class="coach-feels">${CHECKS.map(x => `<button class="chip-btn" data-check="${x}">${x}</button>`).join('')}</div></div>`);
+  if (c && c.more && !live) bubbles.push(`<div class="coach-acts two"><button class="btn primary" data-act="coach-more">${c.task ? c.task.min : 15}분 더</button><button class="btn" data-act="coach-stop">여기까지</button></div>`);
   if (state.coachNote) bubbles.push(`<p class="bubble note">${esc(state.coachNote)}</p>`);
-  $('#coach-log').innerHTML = bubbles.join('') || '<p class="muted coach-log-empty">지금 어떤 마음이에요? 하나만 눌러도 돼요.</p>';
-  $('#coach-start').innerHTML = c ? '' : `<div class="coach-feels">${FEELS.map(f => `<button class="chip-btn" data-feel="${f}">${f}</button>`).join('')}</div>`;
+  $('#coach-log').innerHTML = bubbles.join('') || (nudge ? `<div class="bubble ai">${NUDGE_FREE_WD.includes(wdOf(today())) ? '호호, 지금 어디쯤이에요?' : '나를 위한 시간, 공부를 보냈나요?'} 하나만 눌러 주세요.</div>`
+    : '<p class="muted coach-log-empty">지금 어떤 마음이에요? 하나만 눌러도 돼요.</p>');
+  if (draft && $('#coach-line')) $('#coach-line').value = draft;
+  // 시작 칩 — 낮 알림으로 왔으면 고정 첫 화면(US-806, 여기까지 API를 부르지 않는다)
+  const oldDoing = $('#nudge-line'), doingDraft = oldDoing ? oldDoing.value : '';
+  $('#coach-start').innerHTML = c ? '' : !nudge ? `<div class="coach-feels">${FEELS.map(f => `<button class="chip-btn" data-feel="${f}">${f}</button>`).join('')}</div>`
+    : `<div class="coach-feels">${BRANCH.map(f => `<button class="chip-btn" data-feel="${f}">${f}</button>`).join('')}<button class="chip-btn ${state.nudgeDoing ? 'on' : ''}" data-act="nudge-doing">이미 하고 있어요</button><button class="chip-btn" data-act="nudge-off">오늘은 쉬는 날</button></div>
+      ${state.nudgeDoing ? `<div class="inline coach-in"><input class="field" id="nudge-line" placeholder="뭐 하고 있어요? 한 줄 (비워도 돼요)" maxlength="120" enterkeyhint="done" autocomplete="off"><button class="btn primary" data-act="nudge-doing-save">남기기</button></div>` : ''}
+      <p class="small coach-diary"><a href="#calm">✍️ 한 줄 일기만 쓸래요</a></p>`;
+  if (doingDraft && $('#nudge-line')) $('#nudge-line').value = doingDraft;
   const turns = c ? c.n || 0 : 0;
   $('#coach-count').textContent = c ? `이 대화 ${turns}/${C.CHAT_MAX_TURNS} · 오늘 ${chat.daily()}/${C.CHAT_MAX_DAILY}` : '';
   $('#btn-coach-send').disabled = !!live;
-  $('#coach-ctx-text').textContent = `[보내는 규칙과 성향]\n${coachSystem()}\n\n[오늘 상황 — 대화를 시작할 때 한 번]\n${c ? c.ctx : coachContext().text}`;
+  $('#coach-ctx-text').textContent = `[보내는 규칙과 성향]\n${coachSystem()}\n\n[오늘 상황 — 대화를 시작할 때 한 번]\n${c && c.ctx ? c.ctx : coachContext().text}`;
 }
 // 한 번 주고받기. 실패하면 보낸 말을 입력 칸에 되돌리고 한 줄로 알린다 (자동으로 다시 보내지 않는다)
-async function coachSend(text, feel) {
+// show: 화면에 보일 말(보내는 말과 다를 때 — 예: "[확인] 못 했어요 — …")
+async function coachSend(text, feel, show) {
   text = String(text || '').trim(); if (!text || state.coachLive) return;
   let c = coachConv();
-  if (!c) { const ctx = coachContext(); c = { date: today(), feel: feel || text.slice(0, 20), ctx: ctx.text, refs: ctx.refs, msgs: [], n: 0 }; }
+  if (!c) {
+    const ctx = coachContext();
+    c = { id: 'c' + Date.now(), at: Date.now(), date: today(), feel: feel || text.slice(0, 20), ctx: ctx.text, refs: ctx.refs, msgs: [], n: 0, nudge: !!state.coachNudge };
+    state.coachNudge = false; state.nudgeDoing = false;
+  }
   const first = !c.msgs.length;
-  c.msgs.push({ role: 'user', content: first ? `[오늘 상황]\n${c.ctx}\n\n[호호의 말]\n${text}` : text, show: text });
+  c.msgs.push({ role: 'user', content: first ? `[오늘 상황]\n${c.ctx}\n\n${c.nudge ? '[들어온 길] 낮 알림을 눌러 들어왔다(이 시각까지 오늘 공부 기록이 없다).\n\n' : ''}[호호의 말]\n${text}` : text, show: show || text });
   state.coachNote = ''; state.coachLive = { text: '' }; $('#coach-in').value = '';
   saveConv(c); drawCoach();
   chat.turns = c.n || 0;
   try {
-    const r = await chat.send({ system: coachSystem(), messages: c.msgs.map(m => ({ role: m.role, content: m.content })), cache: true,
+    const r = await chat.send({ system: coachSystem(), messages: apiMsgs(c), cache: true,
       onText: t => { state.coachLive.text = t; const el = $('#coach-live'); if (el) el.textContent = stripActs(t) || '…'; } });
     c.msgs.push({ role: 'assistant', content: r.text.trim() || '(빈 답이에요. 다시 말해 줄래요?)' });
   } catch (e) {
-    c.msgs.pop(); $('#coach-in').value = text;
+    c.msgs.pop(); if (!show) $('#coach-in').value = text;
     state.coachNote = chat.errText(e.message) + (e.message === 'daily' || e.message === 'turns' ? ' ' + chat.joyLine() : '');
   } finally {
     c.n = chat.turns; state.coachLive = null;
-    if (c.msgs.length) saveConv(c); else ls.set('chat.conv', null);
+    if (c.msgs.length) saveConv(c); else { ls.set('chat.convs', convAll().filter(x => x.id !== c.id)); ls.set('chat.cur', null); }
     drawCoach();
   }
 }
-// 행동 버튼 (US-707) — 기존 이벤트만. 고르면 메모 한 줄(US-708, 기본 남김)
+// 메모 한 줄 (US-708·US-809) — `💬 코치: 하기 싫어요 → 초록과 그림 1 보기 · 했어요`. 결말 = 했어요·조금·못 했어요·내일로·안 하기·쉼·답 없음
+async function coachMemo(c, what, end, line) {
+  c.end = what + (end ? ` · ${end}` : '');
+  if (c.memo === false) return;
+  await record('memo', { text: `💬 코치: ${c.feel} → ${c.end}${line ? ` — ${line}` : ''}` }, c.date);
+}
+// 확인 알림 (US-807) — 과업을 고르면 C.NUDGE_CHECK_MIN분 뒤(5분 과업은 10분 뒤) 한 번. 대화 하나에 C.NUDGE_CHECK_MAX번까지
+const checkDelayMin = min => (min >= 15 ? C.NUDGE_CHECK_MIN || 20 : min + 5);
+async function scheduleCheck(c) {
+  if (!c.task || (c.checks || 0) >= (C.NUDGE_CHECK_MAX || 2) || !push.topic() || !navigator.onLine || state.demo) return;
+  try {
+    const id = await push.send({ title: '💬 뭐 봤어요? 한 줄만', message: `${c.task.min}분 과업, 어디까지 갔는지만 알려 주세요`, at: c.task.at, priority: 4, tags: ['speech_balloon'], click: NTFY.click + '#check' });
+    c.task.ids = [id]; c.checks = (c.checks || 0) + 1;
+  } catch (err) { console.warn('확인 알림 예약 실패', err); }
+}
+async function cancelCheck(c) { for (const id of (c.task && c.task.ids) || []) await push.cancel(id); if (c.task) c.task.ids = []; }
+async function startTask(c, text, min) {
+  c.task = { text, min, at: Date.now() + checkDelayMin(min) * 60000, ids: [], end: null }; c.more = false;
+  await scheduleCheck(c); saveConv(c);
+}
+// 행동 버튼 (US-707·US-805) — 고르면 메모 한 줄(체크 칸, 기본 남김). 과업은 결말을 알 때(확인) 메모를 남긴다
 async function coachDo(k) {
-  const c = coachConv(); if (!c || c.done) return;
-  const last = [...c.msgs].reverse().find(m => m.role === 'assistant'); if (!last) return;
+  const c = coachConv(); if (!c) return;
+  const last = lastAi(c); if (!last || last.done) return;
   const a = coachActions(last.content, c.refs)[k]; if (!a) return;
-  const t = today();
-  if ($('#coach-memo').checked) await record('memo', { text: `💬 코치: ${c.feel} → ${a.label.replace(/^\S+\s/, '')}` }, t);
-  c.done = a.label; saveConv(c);
+  const t = today(), refs = { g: {}, w: {}, p: {}, j: {}, a: {}, ...(c.refs || {}) };
+  c.memo = $('#coach-memo').checked; last.done = a.label; saveConv(c);
+  if (a.kind === '과업') {
+    if (!goalsFor(t).some(g => g.text === a.text)) await record('quick', { text: `목표 ${a.text}` });   // 오늘 할 일에 올린다 (기존 quick 이벤트)
+    setFocus(a.text); c.end = `${a.text} · 확인 전`;
+    await startTask(c, a.text, a.min);
+    location.hash = ''; toast(`🎯 ${a.min}분만 해요 · ${hmAt(c.task.at)}쯤 물어볼게요`); return;
+  }
   if (a.kind === '쉼') {
-    const joy = c.refs.j[a.arg], [, id, small] = a.arg.split(':'), act = joy ? actByText(joy.text) : c.refs.a[id] && activities().find(x => x.id === id);
+    const joy = refs.j[a.arg], [, id, small] = a.arg.split(':'), act = joy ? actByText(joy.text) : refs.a[id] && activities().find(x => x.id === id);
     const label = joy ? joy.text : act.name + (small ? ' · 작게' : ''), steps = act ? (small && act.small ? [act.small] : act.steps) : [];
     const startAt = Date.now();
+    await coachMemo(c, label, '쉼'); saveConv(c);
     await record('rest-choose', { label, min: null, act: act ? act.id : '' });
     ls.set('resting', { label, min: null, hm: nowHM(), steps: steps.map(s => ({ text: s.text, min: s.min, done: false })), startAt, endAt: null });
     state.rest = {}; location.hash = '#rest'; return;
   }
-  if (a.kind === '약속') { const p = c.refs.p[a.arg]; location.hash = ''; toast(pFirst(p) ? `💚 첫 동작: ${pFirst(p)}` : `💚 ${pName(p)}`); return; }
-  if (a.kind === '할일') { state.focusGoal = c.refs.g[a.arg].text; location.hash = ''; toast('🎯 이것 하나만 해요'); return; }
-  if (a.kind === '내일로') { await record('goal-move', { text: c.refs.g[a.arg].text, to: addDaysStr(t, 1) }); toast('내일 할 일로 옮겼어요'); drawCoach(); return; }
+  if (a.kind === '약속') { const p = refs.p[a.arg]; await coachMemo(c, `${pName(p)} 하러 가기`); saveConv(c); location.hash = ''; toast(pFirst(p) ? `💚 첫 동작: ${pFirst(p)}` : `💚 ${pName(p)}`); return; }
+  if (a.kind === '내일로') {
+    const text = refs.g[a.arg].text;
+    await coachMemo(c, text, '내일로'); saveConv(c);
+    await record('goal-move', { text, to: addDaysStr(t, 1) }); toast('내일 할 일로 옮겼어요'); drawCoach(); return;
+  }
   if (a.kind === '안하기') {
-    const p = c.refs.p[a.arg];
+    const p = refs.p[a.arg];
+    await coachMemo(c, pName(p), '안 하기'); saveConv(c);
     await record('promise-skip', { id: p.id, kind: p.kind, name: pName(p), date: p.date, reason: '코치와 이야기하고 오늘은 쉬기로' }, p.date);
     syncPromisePush(); toast('🌙 오늘은 쉬어요'); drawCoach(); return;
   }
+  await coachMemo(c, '오늘은 여기까지', '쉼'); saveConv(c);
   toast('🌙 오늘은 여기까지. 잘 쉬어요'); drawCoach();
+}
+// 과업 확인에 답하기 (US-807). 했어요·조금 = 메모 + "더 할까요"(API 없음) · 못 했어요 = 코치에게 보내 5분 과업 한 번
+async function coachCheck(ans) {
+  const c = coachConv(); if (!c || !c.task || c.task.end || state.coachLive) return;
+  const el = $('#coach-line'), line = el ? el.value.replace(/\s+/g, ' ').trim() : '', task = c.task;
+  const end = ans === '조금 했어요' ? '조금' : ans;
+  await cancelCheck(c); task.end = end; saveConv(c);
+  await coachMemo(c, task.text, end, line); saveConv(c);
+  const show = ans + (line ? ` — ${line}` : '');
+  if (ans === '못 했어요') { await coachSend(`[확인] ${show} (${task.min}분 과업: ${task.text})`, null, show); return; }
+  if (ans === '했어요' && goalsFor(today()).some(g => g.text === task.text && !g.done)) await record('goal-set', { text: task.text, done: true });
+  c.msgs.push({ role: 'user', content: `[확인] ${show} (${task.min}분 과업: ${task.text})`, show });
+  c.msgs.push({ role: 'assistant', local: true, content: `${ans === '했어요' ? '끝 기준까지 갔네요.' : '시작한 것만으로 오늘 몫은 했어요.'} ${task.min}분 더 할까요, 여기까지 할까요?` });
+  c.more = true; saveConv(c); drawCoach();
+}
+// 오늘 할 일에서 과업을 직접 체크하면 남은 확인 알림을 지우고 "했어요"로 닫는다
+async function coachGoalChecked(text, done) {
+  if (!done) return;
+  const c = convAll().find(x => x.date === today() && x.task && !x.task.end && x.task.text === text); if (!c) return;
+  await cancelCheck(c); c.task.end = '했어요'; saveConv(c, c.id === ls.get('chat.cur'));
+  await coachMemo(c, text, '했어요'); saveConv(c, c.id === ls.get('chat.cur'));
+}
+// 답하지 않고 지나간 과업 — 날이 바뀌었거나 물어본 지 3시간이 지나면 "답 없음"으로 닫는다 (US-809 결말 세기)
+async function coachSweep() {
+  if (state.demo) return;
+  for (const c of convAll()) {
+    if (!c.task || c.task.end || (c.date >= today() && Date.now() < c.task.at + 3 * 3600000)) continue;
+    const cur = c.id === ls.get('chat.cur');
+    c.task.end = '답 없음'; c.more = false; saveConv(c, cur);
+    const kept = convAll().find(x => x.id === c.id);
+    if (!kept || !kept.task || kept.task.end !== '답 없음') continue;   // 폰 저장에 실패했으면 메모를 남기지 않는다(열 때마다 되풀이되지 않게)
+    await coachMemo(c, c.task.text, '답 없음'); saveConv(c, cur);
+  }
 }
 $('#btn-coach-send').onclick = () => coachSend($('#coach-in').value);
 $('#coach-in').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); coachSend($('#coach-in').value); } });
 
+// 💬 코치 화면의 버튼 — 다른 버튼보다 먼저 본다. 처리했으면 true
+async function coachClick(d) {
+  if (d.feel) { coachSend(d.feel, d.feel); return true; }
+  if (d.say) { coachSend(d.say); return true; }
+  if (d.check) { await coachCheck(d.check); return true; }
+  if (d.past) { state.coachPast = d.past; drawCoach(); return true; }
+  switch (d.act) {
+    case 'coach-do': await coachDo(+d.k); return true;
+    case 'coach-new': if (state.coachLive) return true; ls.set('chat.cur', null); state.coachNote = ''; state.coachNudge = false; state.nudgeDoing = false; drawCoach(); return true;   // 앞 대화는 지난 대화에 남는다
+    case 'coach-past': state.coachPast = 'list'; drawCoach(); return true;
+    case 'coach-back': state.coachPast = null; drawCoach(); return true;
+    case 'coach-wk': {   // 이번 주 목표로 저장 (US-804) — 덧붙이기만. PC가 wiki/weeks 파일에 쓴다
+      const c = coachConv(), m = c && lastAi(c); if (!m || m.wk) return true;
+      const wk = isoWeek(today()), have = weekGoalsNow().map(g => g.text), add = coachWeekGoals(m.content).filter(t => !have.includes(t));
+      m.wk = true; saveConv(c);
+      for (const text of add) await record('week-goal-add', { week: wk, text });
+      toast(add.length ? `📌 이번 주 목표 ${add.length}개를 저장했어요` : '이미 있는 목표예요'); drawCoach(); return true;
+    }
+    case 'coach-more': {
+      const c = coachConv(); if (!c || !c.task) return true;
+      c.msgs.push({ role: 'user', content: `${c.task.min}분 더 할게요`, show: `${c.task.min}분 더` });
+      c.end = `${c.task.text} · 확인 전`;
+      await startTask(c, c.task.text, c.task.min);
+      location.hash = ''; toast(`🎯 ${c.task.min}분 더 · ${hmAt(c.task.at)}쯤 물어볼게요`); return true;
+    }
+    case 'coach-stop': { const c = coachConv(); if (c) { c.more = false; c.msgs.push({ role: 'user', content: '여기까지 할게요', show: '여기까지' }); saveConv(c); } toast('여기까지. 잘했어요'); drawCoach(); return true; }
+    case 'nudge-doing': state.nudgeDoing = !state.nudgeDoing; drawCoach(); if ($('#nudge-line')) $('#nudge-line').focus(); return true;
+    case 'nudge-doing-save': {
+      const el = $('#nudge-line'), line = el ? el.value.replace(/\s+/g, ' ').trim() : '';
+      await record('memo', { text: `💬 코치: 이미 하고 있어요${line ? ` — ${line}` : ''}` });
+      state.coachNudge = false; state.nudgeDoing = false; location.hash = ''; toast('남겼어요. 이어서 해요'); return true;
+    }
+    case 'nudge-off':
+      await record('memo', { text: '💬 코치: 오늘은 쉬는 날' });
+      state.coachNudge = false; state.nudgeDoing = false; location.hash = ''; toast('🌙 오늘은 쉬는 날. 다시 묻지 않을게요'); return true;
+  }
+  return false;
+}
+
 $('#main').addEventListener('click', async e => {
   const b = e.target.closest('button, a'); if (!b) return;
   const d = b.dataset;
-  // 💬 코치 대화
-  if (d.feel) { coachSend(d.feel, d.feel); return; }
-  if (d.act === 'coach-do') { await coachDo(+d.k); return; }
-  if (d.act === 'coach-new') { if (state.coachLive) return; ls.set('chat.conv', null); state.coachNote = ''; drawCoach(); return; }
+  if (await coachClick(d)) return;   // 💬 코치 대화
   unlockAudio();   // 누른 순간에만 소리를 열 수 있다 — 나중에 타이머 끝 알람이 이걸 쓴다
   // 처음 (쉼 → 일 전환 카드에서도 같은 버튼)
   if (d.act === 'run') { if ((ls.get('resting') || {}).back) ls.set('resting', null); startCount(d.tid); location.hash = '#run'; return; }
@@ -2201,8 +2455,8 @@ $('#did-list').onchange = async e => {
   await record('did-undo', { act }, logDate()); toast(`${act} 체크를 풀었어요`);
 };
 $('#today-list').onchange = async e => {
-  const i = +e.target.dataset.ti, g = goalsFor(today())[i];
-  if (g) await record('goal-set', { text: g.text, index: i, done: e.target.checked });
+  const i = +e.target.dataset.ti, g = goalsFor(today())[i], done = e.target.checked;
+  if (g) { await record('goal-set', { text: g.text, index: i, done }); await coachGoalChecked(g.text, done); }
 };
 const addToday = async () => {
   const text = $('#today-in').value.replace(/\s+/g, ' ').trim(); if (!text) return;
@@ -2264,6 +2518,11 @@ $('#btn-chat-clear').onclick = async () => {
   if (!(await chat.keyInfo())) { toast('지울 키가 없어요'); return; }
   if (!confirm('이 폰에 저장한 코치 대화 키를 지울까요?')) return;
   await chat.clearKey(); await drawChatKey(); toast('키를 지웠어요');
+};
+$('#btn-chat-wipe').onclick = () => {
+  if (!convAll().length) { toast('지울 대화가 없어요'); return; }
+  if (!confirm('이 폰에 있는 지난 코치 대화를 모두 지울까요? 메모에 남긴 한 줄은 그대로 있어요.')) return;
+  ls.set('chat.convs', []); ls.set('chat.cur', null); state.coachPast = null; toast('지난 대화를 지웠어요'); if (view() === 'coach') drawCoach();
 };
 $('#btn-chat-test').onclick = async () => {
   const m = $('#chat-msg'), b = $('#btn-chat-test');
@@ -2365,8 +2624,31 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
         : { tid: q.get('run'), phase: 'count', countAt: now + LAUNCH.count * 1000, delays, delaysTotal: delays };
     }
     // 앱 v39 확인용: &mockchat=1 → 같은 주소의 가짜 API(/mock/v1/messages, 개발 서버만) · &coachsay=하기 싫어요 → 코치 화면에서 그 말로 시작
-    if (q.get('mockchat')) { C.CHAT_API = '/mock/v1/messages'; chat.apiKey = async () => 'sk-ant-mock'; ls.set('chat.conv', null); }
+    if (q.get('mockchat')) { C.CHAT_API = '/mock/v1/messages'; chat.apiKey = async () => 'sk-ant-mock'; ls.set('chat.convs', []); ls.set('chat.cur', null); ls.set('focus', null); }
     if (q.get('coachsay')) { location.hash = '#coach'; setTimeout(() => coachSend(q.get('coachsay'), q.get('coachsay')), 300); }
+    // 앱 v40 확인용: &wk=1 → 지어낸 이번 주 목표 · &nudge=1 → 낮 알림 첫 화면 · &coachplay=say:하기 싫어요;say:뭘 할지 흐릿해요;do:0;go:coach;line:그림 1까지;check:했어요
+    //   (say 말하기 · do 행동 버튼 k번 · go 화면 · line 확인 한 줄 · check 확인 칩 · act 버튼 이름 · past 지난 대화)
+    if (q.get('wk')) { state.snap.week = isoWeek(today()); state.snap.weekGoals = [{ text: '선행연구 다섯 편 표로 정리', done: false, depth: 0 }, { text: '발표 자료 초안', done: false, depth: 0 }]; }
+    if (q.get('nudge')) location.hash = '#nudge';
+    if (q.get('coachplay')) {
+      if (q.get('nudge')) state.coachNudge = true;   // 아래에서 주소를 바로 바꾸면 #nudge 처리가 건너뛰어진다
+      location.hash = '#coach';
+      const wait = ms => new Promise(r => setTimeout(r, ms));
+      setTimeout(async () => {
+        for (const step of q.get('coachplay').split(';')) {
+          const i = step.indexOf(':'), op = i < 0 ? step : step.slice(0, i), arg = i < 0 ? '' : step.slice(i + 1);
+          if (op === 'say') await coachSend(arg, coachConv() ? undefined : arg);
+          else if (op === 'do') await coachDo(+arg);
+          else if (op === 'go') location.hash = arg ? '#' + arg : '';
+          else if (op === 'line') { const el = $('#coach-line') || $('#nudge-line'); if (el) el.value = arg; }
+          else if (op === 'check') await coachCheck(arg);
+          else if (op === 'act') await coachClick({ act: arg });
+          else if (op === 'past') { state.coachPast = arg; await drawCoach(); }
+          await wait(200);
+        }
+        document.title = 'play-done';
+      }, 300);
+    }
     if (!routeHash()) draw();
     if (q.get('settings')) { $('#settings').showModal(); drawChatKey(); }   // 앱 v38 확인용: &settings=1 → 설정 창(💬 코치 대화 칸)
     return;   // 미리보기는 IndexedDB를 기다리지 않고 바로
@@ -2381,6 +2663,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { fl
   render();
   flush();
   prune();
+  coachSweep();        // 답하지 않고 지나간 과업을 "답 없음"으로 닫는다
   syncPromisePush();   // 꺼져 있던 동안 못 건 약속 푸시를 건다
   routeHash();         // 알림을 눌러 열렸으면 그 약속으로
 })();

@@ -61,7 +61,7 @@
     <p class="joy-line plan-line" id="plan-line"></p>
   </div>
 
-  <!-- ===== 💬 코치 대화 (앱 v39, PRD tasks/prd-coach-chat.md 단계 2) ===== -->
+  <!-- ===== 💬 코치 대화 (앱 v39 PRD tasks/prd-coach-chat.md · 앱 v40 PRD tasks/prd-coach-nudge.md) ===== -->
   <div class="view" id="v-coach" hidden>
     <section class="card" id="coach-nokey" hidden>
       <p>설정에서 키를 넣으면 쓸 수 있어요.</p>
@@ -69,10 +69,12 @@
     </section>
     <section class="card coach" id="coach-card">
       <div id="coach-log"></div>
-      <div id="coach-start"></div>
-      <div class="inline coach-in"><input class="field" id="coach-in" placeholder="직접 써도 돼요" maxlength="300" enterkeyhint="send" autocomplete="off"><button class="btn primary" id="btn-coach-send">보내기</button></div>
-      <label class="p-small"><input type="checkbox" id="coach-memo" checked> 행동을 고르면 메모에 한 줄 남기기</label>
-      <div class="coach-foot"><span class="muted small" id="coach-count"></span><button class="link small" data-act="coach-new">새 대화</button></div>
+      <div id="coach-ui">
+        <div id="coach-start"></div>
+        <div class="inline coach-in"><input class="field" id="coach-in" placeholder="직접 써도 돼요" maxlength="300" enterkeyhint="send" autocomplete="off"><button class="btn primary" id="btn-coach-send">보내기</button></div>
+        <label class="p-small"><input type="checkbox" id="coach-memo" checked> 행동을 고르면 메모에 한 줄 남기기</label>
+      </div>
+      <div class="coach-foot" id="coach-foot"></div>
       <details class="coach-ctx"><summary class="small">무엇을 보내나요?</summary><pre id="coach-ctx-text"></pre></details>
     </section>
   </div>
@@ -203,9 +205,10 @@
   <div class="checks">
     <button class="btn" id="btn-chat-test">💬 시험 호출</button>
     <button class="link small" id="btn-chat-clear">키 지우기</button>
+    <button class="link small" id="btn-chat-wipe">지난 대화 모두 지우기</button>
   </div>
   <p class="small" id="chat-msg"></p>
-  <p class="muted small">콘솔의 <b>sh-coach</b> 워크스페이스에서 만든 이 앱 전용 키를 넣어 주세요. 키는 암호 문구로 잠가 이 폰에만 두고, Dropbox·PC로 보내지 않아요. 대화 하나에 12번, 하루 60번까지 보내요.</p>
+  <p class="muted small">콘솔의 <b>sh-coach</b> 워크스페이스에서 만든 이 앱 전용 키를 넣어 주세요. 키는 암호 문구로 잠가 이 폰에만 두고, Dropbox·PC로 보내지 않아요. 대화 하나에 12번, 하루 60번까지 보내요. 지난 대화는 이 폰에만 7일 동안 있어요.</p>
   <div class="row">
     <button class="btn" id="btn-disconnect">연결 끊기</button>
     <button class="btn" id="btn-rekey">암호 문구 다시 입력</button>

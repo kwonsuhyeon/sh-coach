@@ -356,3 +356,14 @@ dialog h3 { margin: 14px 0 8px; }
 .coach-ctx { margin-top: 10px; }
 .coach-ctx pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; background: #f6f6f3; border-radius: 10px; padding: 10px; max-height: 320px; overflow: auto; }
 .goals li.focus { background: var(--blue-soft); border-radius: 8px; padding-left: 6px; }
+/* 💬 코치가 먼저 묻기 (앱 v40) */
+.coach-acts.two { grid-template-columns: 1fr 1fr; }
+.coach-acts.two .btn { text-align: center; }
+.coach-links { display: flex; gap: 14px; }
+.coach-check { border: 1px solid var(--blue-soft); background: var(--blue-soft); border-radius: var(--radius); padding: 12px; margin: 10px 0; }
+.coach-check p { margin: 0 0 8px; }
+.coach-check .field { width: 100%; margin-bottom: 8px; background: #fff; }
+.coach-check .coach-feels { margin-bottom: 0; }
+.coach-check .chip-btn { background: #fff; }
+.coach-wk { margin: 2px 0 6px; padding-left: 20px; font-size: 14px; }
+.coach-diary { margin: 0 0 10px; }
